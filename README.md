@@ -8,7 +8,9 @@ fails). Not interoperable with JS holesail — see `docs/superpowers/specs/`.
 
 ```bash
 # 1. Hub (public VPS): relay + optional ws service registry
-goholesail hub --listen /ip4/0.0.0.0/tcp/4001 --registry-listen :8080
+#    Pass a stable --seed so the hub's peer id (and every --hub / ghs:// string
+#    that embeds it) survives restarts; omit it for a throwaway ephemeral id.
+goholesail hub --listen /ip4/0.0.0.0/tcp/4001 --registry-listen :8080 --seed <hub-seed>
 
 # 2a. Host, public mode
 goholesail host --live 22 --seed <seed> --hub <hub-/p2p-addr>

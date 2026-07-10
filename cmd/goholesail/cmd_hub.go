@@ -16,11 +16,12 @@ import (
 func newHubCmd() *cobra.Command {
 	var listen string
 	var registryListen string
+	var seed string
 	cmd := &cobra.Command{
 		Use:   "hub",
 		Short: "Run the relay/rendezvous hub",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			h, err := hub.New(listen)
+			h, err := hub.New(listen, seed)
 			if err != nil {
 				return err
 			}
@@ -47,6 +48,7 @@ func newHubCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&listen, "listen", "/ip4/0.0.0.0/tcp/4001", "libp2p listen multiaddr")
 	cmd.Flags().StringVar(&registryListen, "registry-listen", "", "registry HTTP listen addr, e.g. :8080 (empty = relay only)")
+	cmd.Flags().StringVar(&seed, "seed", "", "stable identity seed (empty = ephemeral; set it to keep --hub stable across restarts)")
 	return cmd
 }
 

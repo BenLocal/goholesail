@@ -50,7 +50,7 @@ func TestEndToEndTCPTunnel(t *testing.T) {
 	echoPort := startEcho(t)
 
 	// Hub on a random local port.
-	h, err := ghub.New("/ip4/127.0.0.1/tcp/0")
+	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestPrivateTunnelRightSecret(t *testing.T) {
 	defer cancel()
 	echoPort := startEcho(t)
 
-	h, err := ghub.New("/ip4/127.0.0.1/tcp/0")
+	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestPrivateTunnelWrongSecretRejected(t *testing.T) {
 	defer cancel()
 	echoPort := startEcho(t)
 
-	h, err := ghub.New("/ip4/127.0.0.1/tcp/0")
+	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestRegistryNameResolutionPrivate(t *testing.T) {
 	regURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/reg"
 
 	// Hub.
-	h, err := ghub.New("/ip4/127.0.0.1/tcp/0")
+	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestRegistryPrivateWithoutSecretFails(t *testing.T) {
 	t.Cleanup(ts.Close)
 	regURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/reg"
 
-	h, err := ghub.New("/ip4/127.0.0.1/tcp/0")
+	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
