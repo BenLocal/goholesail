@@ -2,6 +2,7 @@ package registry
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -15,17 +16,33 @@ type Server struct {
 	store    *Store
 	upgrader websocket.Upgrader
 	mux      *http.ServeMux
+	logger   *log.Logger // nil => silent; the hub injects one, tests stay quiet
 }
 
-// NewServer wraps a Store. If store is nil a fresh one is created.
+// NewServer wraps a Store with no logging. If store is nil a fresh one is
+// created.
 func NewServer(store *Store) *Server {
+	return NewServerWithLogger(store, nil)
+}
+
+// NewServerWithLogger wraps a Store and logs each request to logger. A nil
+// logger is silent, so callers opt into logging explicitly. Secrets are never
+// logged (the registry is zero-trust and holds none).
+func NewServerWithLogger(store *Store, logger *log.Logger) *Server {
 	if store == nil {
 		store = NewStore()
 	}
-	s := &Server{store: store, mux: http.NewServeMux()}
+	s := &Server{store: store, mux: http.NewServeMux(), logger: logger}
 	s.mux.HandleFunc("/reg", s.handleWS)
 	s.mux.HandleFunc("/services", s.handleList)
 	return s
+}
+
+// logf logs a request event when a logger was injected, else it is a no-op.
+func (s *Server) logf(format string, args ...any) {
+	if s.logger != nil {
+		s.logger.Printf(format, args...)
+	}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
@@ -45,6 +62,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.Close()
+	s.logf("ws conn open from %s", r.RemoteAddr)
+	defer s.logf("ws conn close from %s", r.RemoteAddr)
 	// One reader, one writer per connection: request in, response out. No
 	// server-initiated pushes (subscribe is deferred), so no write mutex needed.
 	//
@@ -71,6 +90,7 @@ func (s *Server) handle(m Msg) (Msg, bool) {
 	switch m.Type {
 	case "register":
 		if m.Service == nil || m.Service.Name == "" {
+			s.logf("register: missing service")
 			return Msg{Type: "error", Error: "register: missing service"}, true
 		}
 		ttl := time.Duration(m.TTLSeconds) * time.Second
@@ -78,6 +98,8 @@ func (s *Server) handle(m Msg) (Msg, bool) {
 			ttl = 90 * time.Second
 		}
 		s.store.Put(*m.Service, ttl)
+		s.logf("register name=%s peer=%s private=%v tags=%v ttl=%s",
+			m.Service.Name, m.Service.PeerID, m.Service.Private, m.Service.Tags, ttl)
 		return Msg{Type: "ok"}, true
 	case "renew":
 		ttl := time.Duration(m.TTLSeconds) * time.Second
@@ -85,21 +107,29 @@ func (s *Server) handle(m Msg) (Msg, bool) {
 			ttl = 90 * time.Second
 		}
 		if !s.store.Renew(m.Name, ttl) {
+			s.logf("renew name=%s: unknown", m.Name)
 			return Msg{Type: "error", Error: "renew: unknown name"}, true
 		}
+		s.logf("renew name=%s ttl=%s", m.Name, ttl)
 		return Msg{Type: "ok"}, true
 	case "deregister":
 		s.store.Remove(m.Name)
+		s.logf("deregister name=%s", m.Name)
 		return Msg{Type: "ok"}, true
 	case "resolve":
 		svc, ok := s.store.Get(m.Name)
 		if !ok {
+			s.logf("resolve name=%s: not found", m.Name)
 			return Msg{Type: "error", Error: "resolve: unknown name"}, true
 		}
+		s.logf("resolve name=%s -> %s", m.Name, svc.PeerID)
 		return Msg{Type: "resolved", Service: &svc}, true
 	case "list":
-		return Msg{Type: "services", Services: s.store.List(m.Tag)}, true
+		svcs := s.store.List(m.Tag)
+		s.logf("list tag=%q -> %d services", m.Tag, len(svcs))
+		return Msg{Type: "services", Services: svcs}, true
 	default:
+		s.logf("unknown message type %q", m.Type)
 		return Msg{Type: "error", Error: "unknown message type"}, true
 	}
 }

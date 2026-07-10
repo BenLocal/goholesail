@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,12 +25,14 @@ func newHubCmd() *cobra.Command {
 				return err
 			}
 			defer h.Close()
+			hub.AttachConnLogger(h, log.New(os.Stderr, "[hub] ", log.LstdFlags))
 			fmt.Println("hub listening; dial addresses:")
 			for _, a := range hub.P2pAddrs(h) {
 				fmt.Println("  " + a)
 			}
 			if registryListen != "" {
-				srv := &http.Server{Addr: registryListen, Handler: registry.NewServer(registry.NewStore())}
+				regLog := log.New(os.Stderr, "[registry] ", log.LstdFlags)
+				srv := &http.Server{Addr: registryListen, Handler: registry.NewServerWithLogger(registry.NewStore(), regLog)}
 				go func() {
 					if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 						fmt.Fprintln(cmd.ErrOrStderr(), "registry server:", err)
