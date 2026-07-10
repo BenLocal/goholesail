@@ -33,4 +33,6 @@ go.work.sum
 
 /docs/superpowers
 
-goholesail
+# Built binary (anchored so it never ignores the cmd/goholesail SOURCE dir).
+/goholesail
+/cmd/goholesail/goholesail
