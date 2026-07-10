@@ -18,7 +18,8 @@ type Service struct {
 	Tags    []string `json:"tags,omitempty"`
 }
 
-// Msg is the ws wire frame. Type discriminates; unused fields are omitted.
+// Msg is the JSON frame sent over a registry stream. Type discriminates;
+// unused fields are omitted.
 type Msg struct {
 	Type       string    `json:"type"`
 	Service    *Service  `json:"service,omitempty"`
