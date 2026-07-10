@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -26,6 +28,7 @@ func newConnectCmd() *cobra.Command {
 			h, ln, err := client.Run(ctx, client.Options{
 				ConnString: args[0], LocalPort: port,
 				Hub: hubAddr, Secret: secret,
+				Logger: log.New(os.Stderr, "[connect] ", log.LstdFlags),
 			})
 			if err != nil {
 				return err

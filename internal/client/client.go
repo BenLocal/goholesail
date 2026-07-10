@@ -6,6 +6,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -27,6 +29,8 @@ type Options struct {
 
 	Secret string // secret for private hosts
 	Hub    string // hub /p2p multiaddr; required when ConnString is a bare name
+
+	Logger *log.Logger // nil => silent; the CLI injects a [connect] logger
 }
 
 // Run resolves the connection string, dials the host via the relay, and serves
@@ -44,6 +48,7 @@ func Run(ctx context.Context, opts Options) (host.Host, net.Listener, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("client: new: %w", err)
 	}
+	attachConnLogger(h, opts.Logger)
 
 	// A bare name is resolved over the hub's registry, which needs h connected
 	// to the hub first; a ghs:// string is decoded locally.
@@ -99,20 +104,27 @@ func Run(ctx context.Context, opts Options) (host.Host, net.Listener, error) {
 				return // listener closed
 			}
 			go func() {
-				// Allow the stream over a limited (relay) connection; if DCUtR
-				// has upgraded to a direct connection this is a harmless no-op.
+				// Re-add the circuit addr before dialing: after a prior
+				// connection dropped, its peerstore entry may have aged out, so
+				// a lazy NewStream would have no address to re-dial. Idempotent.
+				h.Peerstore().AddAddr(hostID, circuit, peerstore.PermanentAddrTTL)
 				sctx := network.WithAllowLimitedConn(ctx, "goholesail")
 				s, err := h.NewStream(sctx, hostID, tunnel.ProtocolID)
 				if err != nil {
+					logf(opts.Logger, "stream open to %s failed: %v", hostID, err)
 					_ = conn.Close()
 					return
 				}
+				logf(opts.Logger, "stream opened to %s", hostID)
 				if err := tunnel.ClientHandshake(s, secret); err != nil {
+					logf(opts.Logger, "handshake failed: %v", err)
 					_ = s.Reset()
 					_ = conn.Close()
 					return
 				}
+				logf(opts.Logger, "handshake ok")
 				tunnel.Pump(conn, s)
+				logf(opts.Logger, "local conn closed for %s", hostID)
 			}()
 		}
 	}()
@@ -159,4 +171,11 @@ func resolveConnString(ctx context.Context, h host.Host, opts Options) (connstr.
 		Hub:     opts.Hub,
 		Secret:  opts.Secret,
 	}, hubInfo, nil
+}
+
+// logf logs when a logger was provided, else is a no-op.
+func logf(l *log.Logger, format string, args ...any) {
+	if l != nil {
+		l.Printf(format, args...)
+	}
 }

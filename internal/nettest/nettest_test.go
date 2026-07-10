@@ -424,3 +424,78 @@ func TestHostRenewsReservation(t *testing.T) {
 	}
 	t.Fatalf("expected >=2 relay reservations, got log:\n%s", sb.String())
 }
+
+func TestConnectLoggingAndRedial(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	echoPort := startEcho(t)
+
+	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "")
+	if err != nil {
+		t.Fatalf("hub: %v", err)
+	}
+	t.Cleanup(func() { _ = hubH.Close() })
+	hubAddr := ghub.P2pAddrs(hubH)[0]
+
+	hostH, cs, err := ghost.Run(ctx, ghost.Options{Seed: "log-seed", LocalPort: echoPort, HubAddr: hubAddr})
+	if err != nil {
+		t.Fatalf("host run: %v", err)
+	}
+	t.Cleanup(func() { _ = hostH.Close() })
+
+	var sb syncBuf
+	clientH, ln, err := gclient.Run(ctx, gclient.Options{
+		ConnString: cs, LocalPort: 0,
+		Logger: log.New(&sb, "[connect] ", 0),
+	})
+	if err != nil {
+		t.Fatalf("client run: %v", err)
+	}
+	t.Cleanup(func() { _ = clientH.Close(); _ = ln.Close() })
+
+	// First round-trip through the tunnel.
+	roundTrip(t, ln.Addr().String(), "one", "echo:one\n")
+
+	// Logs should show the stream lifecycle and a direct/relay classification.
+	out := sb.String()
+	for _, want := range []string{"stream opened", "handshake ok", " via "} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("connect log missing %q; got:\n%s", want, out)
+		}
+	}
+
+	// Force a disconnect, then a second round-trip must still succeed: the
+	// client re-adds the circuit addr before each NewStream, so a lazy re-dial
+	// has an address even after the prior connection dropped.
+	decoded, err := connstr.Decode(cs)
+	if err != nil {
+		t.Fatalf("decode cs: %v", err)
+	}
+	hostID, err := peer.Decode(decoded.HostID)
+	if err != nil {
+		t.Fatalf("decode host id: %v", err)
+	}
+	for _, c := range clientH.Network().ConnsToPeer(hostID) {
+		_ = c.Close()
+	}
+	roundTrip(t, ln.Addr().String(), "two", "echo:two\n")
+}
+
+// roundTrip dials the local listener, sends line+"\n", and asserts the reply.
+func roundTrip(t *testing.T, addr, line, want string) {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial local: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	fmt.Fprintf(conn, "%s\n", line)
+	got, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read echoed: %v", err)
+	}
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
