@@ -31,6 +31,13 @@ func (c *Client) roundtrip(ctx context.Context, m Msg) (Msg, error) {
 		return Msg{}, fmt.Errorf("registry: open stream: %w", err)
 	}
 	defer s.Close()
+	// ctx governs only dial+negotiation, not stream Read/Write; bound the
+	// exchange so a hung hub can't block past the caller's deadline.
+	if dl, ok := ctx.Deadline(); ok {
+		_ = s.SetDeadline(dl)
+	} else {
+		_ = s.SetDeadline(time.Now().Add(10 * time.Second))
+	}
 	if err := json.NewEncoder(s).Encode(m); err != nil {
 		_ = s.Reset()
 		return Msg{}, fmt.Errorf("registry: write: %w", err)
@@ -94,6 +101,11 @@ func (c *Client) List(ctx context.Context, tag string) ([]Service, error) {
 	resp, err := c.roundtrip(ctx, Msg{Type: "list", Tag: tag})
 	if err != nil {
 		return nil, err
+	}
+	if resp.Services == nil {
+		// Msg.Services is omitempty, so an empty directory decodes to nil;
+		// return a non-nil empty slice so callers can tell "empty" from "failed".
+		return []Service{}, nil
 	}
 	return resp.Services, nil
 }

@@ -44,6 +44,11 @@ func (s *Server) logf(format string, args ...any) {
 func (s *Server) HandleStream(stream network.Stream) {
 	defer stream.Close()
 	s.logf("stream from %s", stream.Conn().RemotePeer())
+	// Bound the wait for the request: basic_host clears the negotiation deadline
+	// before invoking this handler, so without a deadline a peer that opens a
+	// stream and never sends would park this goroutine (and its FD) forever.
+	// Mirrors the tunnel handler's token read deadline in host.go.
+	_ = stream.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var m Msg
 	if err := json.NewDecoder(stream).Decode(&m); err != nil {
 		_ = stream.Reset()
