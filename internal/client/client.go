@@ -16,9 +16,7 @@ import (
 	"github.com/BenLocal/goholesail/internal/tunnel"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/peerstore"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -66,22 +64,10 @@ func Run(ctx context.Context, opts Options) (host.Host, net.Listener, error) {
 		_ = h.Close()
 		return nil, nil, fmt.Errorf("client: bad host id: %w", err)
 	}
-
-	// Connect to the relay first so its transport address is in the peerstore,
-	// then the short circuit address below is dialable. Idempotent if the name
-	// path already connected during resolution.
-	if err := h.Connect(ctx, *hubInfo); err != nil {
-		_ = h.Close()
-		return nil, nil, fmt.Errorf("client: connect hub: %w", err)
-	}
 	circuit, err := ma.NewMultiaddr("/p2p/" + hubInfo.ID.String() + "/p2p-circuit/p2p/" + hostID.String())
 	if err != nil {
 		_ = h.Close()
 		return nil, nil, fmt.Errorf("client: build circuit addr: %w", err)
-	}
-	if err := h.Connect(ctx, peer.AddrInfo{ID: hostID, Addrs: []ma.Multiaddr{circuit}}); err != nil {
-		_ = h.Close()
-		return nil, nil, fmt.Errorf("client: connect host via relay: %w", err)
 	}
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", opts.LocalPort))
@@ -89,6 +75,11 @@ func Run(ctx context.Context, opts Options) (host.Host, net.Listener, error) {
 		_ = h.Close()
 		return nil, nil, fmt.Errorf("client: listen: %w", err)
 	}
+
+	// Keep hub+host connectivity warm in the background instead of connecting
+	// synchronously, so connect can start before the host (and, for a ghs://
+	// target, the hub) is up, and so a dropped link is re-established.
+	go superviseConnection(ctx, h, *hubInfo, hostID, circuit, opts.Logger)
 
 	// Close the listener when ctx is cancelled so the accept loop below exits,
 	// honoring the "serves ... until ctx is cancelled" contract.
@@ -104,14 +95,10 @@ func Run(ctx context.Context, opts Options) (host.Host, net.Listener, error) {
 				return // listener closed
 			}
 			go func() {
-				// Re-add the circuit addr before dialing: after a prior
-				// connection dropped, its peerstore entry may have aged out, so
-				// a lazy NewStream would have no address to re-dial. Idempotent.
-				h.Peerstore().AddAddr(hostID, circuit, peerstore.PermanentAddrTTL)
-				sctx := network.WithAllowLimitedConn(ctx, "goholesail")
-				s, err := h.NewStream(sctx, hostID, tunnel.ProtocolID)
-				if err != nil {
-					logf(opts.Logger, "stream open to %s failed: %v", hostID, err)
+				// Hold this connection through a transient outage: re-dial with
+				// bounded backoff (addr refresh happens inside ensureConnected).
+				s := openStreamWithRetry(ctx, h, *hubInfo, hostID, circuit, tunnel.ProtocolID, opts.Logger)
+				if s == nil {
 					_ = conn.Close()
 					return
 				}

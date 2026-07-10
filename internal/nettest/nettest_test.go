@@ -15,6 +15,7 @@ import (
 	"github.com/BenLocal/goholesail/internal/connstr"
 	ghost "github.com/BenLocal/goholesail/internal/host"
 	ghub "github.com/BenLocal/goholesail/internal/hub"
+	"github.com/BenLocal/goholesail/internal/identity"
 	"github.com/BenLocal/goholesail/internal/registry"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -556,4 +557,104 @@ func waitUntil(t *testing.T, timeout time.Duration, cond func() bool, what strin
 		time.Sleep(150 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+func TestClientStartsBeforeHost(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	echoPort := startEcho(t)
+
+	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "")
+	if err != nil {
+		t.Fatalf("hub: %v", err)
+	}
+	t.Cleanup(func() { _ = hubH.Close() })
+	hubAddr := ghub.P2pAddrs(hubH)[0]
+
+	const seed = "start-before-host-seed"
+	priv, err := identity.FromSeed(seed)
+	if err != nil {
+		t.Fatalf("seed key: %v", err)
+	}
+	hostID, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("peer id: %v", err)
+	}
+	cs, err := connstr.Encode(connstr.ConnString{Version: 1, HostID: hostID.String(), Hub: hubAddr})
+	if err != nil {
+		t.Fatalf("encode connstr: %v", err)
+	}
+
+	// Client comes up with no host running: Run must still succeed and bind.
+	clientH, ln, err := gclient.Run(ctx, gclient.Options{ConnString: cs, LocalPort: 0})
+	if err != nil {
+		t.Fatalf("client run should not fail when host is down: %v", err)
+	}
+	t.Cleanup(func() { _ = clientH.Close(); _ = ln.Close() })
+
+	hostH, _, err := ghost.Run(ctx, ghost.Options{Seed: seed, LocalPort: echoPort, HubAddr: hubAddr})
+	if err != nil {
+		t.Fatalf("host run: %v", err)
+	}
+	t.Cleanup(func() { _ = hostH.Close() })
+
+	waitUntil(t, 20*time.Second, func() bool {
+		return clientH.Network().Connectedness(hostID) != network.NotConnected
+	}, "client connected to host")
+	roundTrip(t, ln.Addr().String(), "hey", "echo:hey\n")
+}
+
+func TestConnectWaitsThroughOutage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	echoPort := startEcho(t)
+
+	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "")
+	if err != nil {
+		t.Fatalf("hub: %v", err)
+	}
+	t.Cleanup(func() { _ = hubH.Close() })
+	hubAddr := ghub.P2pAddrs(hubH)[0]
+
+	const seed = "outage-seed"
+	priv, err := identity.FromSeed(seed)
+	if err != nil {
+		t.Fatalf("seed key: %v", err)
+	}
+	hostID, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("peer id: %v", err)
+	}
+	cs, err := connstr.Encode(connstr.ConnString{Version: 1, HostID: hostID.String(), Hub: hubAddr})
+	if err != nil {
+		t.Fatalf("encode connstr: %v", err)
+	}
+
+	clientH, ln, err := gclient.Run(ctx, gclient.Options{ConnString: cs, LocalPort: 0})
+	if err != nil {
+		t.Fatalf("client run: %v", err)
+	}
+	t.Cleanup(func() { _ = clientH.Close(); _ = ln.Close() })
+
+	local, err := net.DialTimeout("tcp", ln.Addr().String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial local: %v", err)
+	}
+	defer local.Close()
+	fmt.Fprintf(local, "two\n")
+
+	hostH, _, err := ghost.Run(ctx, ghost.Options{Seed: seed, LocalPort: echoPort, HubAddr: hubAddr})
+	if err != nil {
+		t.Fatalf("host run: %v", err)
+	}
+	t.Cleanup(func() { _ = hostH.Close() })
+
+	_ = local.SetDeadline(time.Now().Add(35 * time.Second))
+	got, err := bufio.NewReader(local).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read echoed through outage: %v", err)
+	}
+	if got != "echo:two\n" {
+		t.Fatalf("got %q, want %q", got, "echo:two\n")
+	}
 }
