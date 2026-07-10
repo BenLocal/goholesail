@@ -1,0 +1,15 @@
+#!/bin/sh
+# goholesail host wrapper: build the `goholesail host` argv from config and exec it.
+# Config comes from /etc/goholesail/host.env if present (native install), else the
+# process environment (Docker env_file). LIVE and HUB are required.
+set -eu
+[ -f /etc/goholesail/host.env ] && . /etc/goholesail/host.env
+: "${LIVE:?LIVE (local TCP port to expose) is required}"
+: "${HUB:?HUB (hub /p2p multiaddr) is required}"
+set -- host --live "$LIVE" --hub "$HUB"
+[ -n "${SEED:-}" ] && set -- "$@" --seed "$SEED"
+[ "${PRIVATE:-}" = 1 ] && set -- "$@" --private
+[ -n "${SECRET:-}" ] && set -- "$@" --secret "$SECRET"
+[ -n "${NAME:-}" ] && set -- "$@" --name "$NAME"
+[ -n "${TAGS:-}" ] && set -- "$@" --tags "$TAGS"
+exec goholesail "$@"
