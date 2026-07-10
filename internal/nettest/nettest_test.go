@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,11 +17,13 @@ import (
 	ghub "github.com/BenLocal/goholesail/internal/hub"
 	"github.com/BenLocal/goholesail/internal/registry"
 	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -369,4 +373,54 @@ func TestRelayNoDataLimit(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatalf("timed out waiting for %d bytes to drain: %v", len(payload), ctx.Err())
 	}
+}
+
+// shortTTLRelayHub builds a hub whose relay grants short-lived reservations, so
+// a test can watch the host renew them. Limits are left infinite so the relay
+// data cap is not the variable under test.
+func shortTTLRelayHub(t *testing.T, ttl time.Duration) host.Host {
+	t.Helper()
+	h, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("relay hub: %v", err)
+	}
+	rc := relay.DefaultResources()
+	rc.Limit = nil
+	rc.ReservationTTL = ttl
+	if _, err := relay.New(h, relay.WithResources(rc)); err != nil {
+		_ = h.Close()
+		t.Fatalf("relay: %v", err)
+	}
+	t.Cleanup(func() { _ = h.Close() })
+	return h
+}
+
+func TestHostRenewsReservation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	echoPort := startEcho(t)
+
+	hubH := shortTTLRelayHub(t, 2*time.Second)
+	hubAddr := ghub.P2pAddrs(hubH)[0]
+
+	var sb syncBuf
+	hostH, _, err := ghost.Run(ctx, ghost.Options{
+		Seed: "renew-seed", LocalPort: echoPort, HubAddr: hubAddr,
+		Logger: log.New(&sb, "[host] ", 0),
+	})
+	if err != nil {
+		t.Fatalf("host run: %v", err)
+	}
+	t.Cleanup(func() { _ = hostH.Close() })
+
+	// With a 2s TTL the host renews at ~1.5s; within ~5s expect the initial
+	// reservation plus at least one renewal.
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Count(sb.String(), "relay reservation ok") >= 2 {
+			return
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	t.Fatalf("expected >=2 relay reservations, got log:\n%s", sb.String())
 }

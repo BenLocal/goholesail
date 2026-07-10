@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"net"
 	"time"
 
@@ -34,6 +35,8 @@ type Options struct {
 
 	Name string   // registry name; empty => no auto-register (registers to --hub)
 	Tags []string // registry tags
+
+	Logger *log.Logger // nil => silent; the CLI injects a [host] logger
 }
 
 // Run starts the host: builds identity, connects to the hub, reserves a relay
@@ -68,10 +71,17 @@ func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 		_ = h.Close()
 		return nil, "", fmt.Errorf("host: connect hub: %w", err)
 	}
-	if _, err := relayclient.Reserve(ctx, h, *hubInfo); err != nil {
+	res, err := relayclient.Reserve(ctx, h, *hubInfo)
+	if err != nil {
 		_ = h.Close()
 		return nil, "", fmt.Errorf("host: reserve relay slot: %w", err)
 	}
+	logReservation(opts.Logger, res)
+	// Keep the reservation alive: it expires after the relay's ReservationTTL
+	// (default 1h) and is lost if the host<->hub connection drops, after which
+	// the relay can no longer forward circuits to this host. Bound to ctx, like
+	// the registry renew loop below.
+	go maintainReservation(ctx, h, *hubInfo, res, opts.Logger)
 
 	secret := ""
 	if opts.Private {
@@ -144,6 +154,26 @@ func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 	return h, str, nil
 }
 
+// reservationRenewWait returns how long to wait before renewing a relay
+// reservation that expires at exp. It renews at 3/4 of the remaining lifetime
+// (so a 1h reservation renews ~15m early and a 2s test reservation renews at
+// 1.5s), with a 1s floor so an already-expired reservation renews promptly
+// instead of spinning.
+func reservationRenewWait(exp, now time.Time) time.Duration {
+	wait := exp.Sub(now) * 3 / 4
+	if wait < time.Second {
+		wait = time.Second
+	}
+	return wait
+}
+
+// logf logs when a logger was provided, else is a no-op.
+func logf(l *log.Logger, format string, args ...any) {
+	if l != nil {
+		l.Printf(format, args...)
+	}
+}
+
 // keyFor returns a deterministic key when seed is set, else a random one.
 func keyFor(seed string) (crypto.PrivKey, error) {
 	if seed != "" {
@@ -157,4 +187,52 @@ func randomSecret() string {
 	var b [32]byte
 	_, _ = rand.Read(b[:])
 	return base64.RawURLEncoding.EncodeToString(b[:])
+}
+
+// logReservation records a granted relay reservation and the limits the relay
+// attached to it (0 duration/data means the relay imposes no per-connection cap).
+func logReservation(l *log.Logger, res *relayclient.Reservation) {
+	logf(l, "relay reservation ok, expires %s (limit dur=%s data=%d)",
+		res.Expiration.Format(time.RFC3339), res.LimitDuration, res.LimitData)
+}
+
+// maintainReservation re-reserves the relay slot before the current reservation
+// expires, forever, until ctx is cancelled.
+func maintainReservation(ctx context.Context, h host.Host, hubInfo peer.AddrInfo, res *relayclient.Reservation, logger *log.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(reservationRenewWait(res.Expiration, time.Now())):
+		}
+		next, ok := reserveWithBackoff(ctx, h, hubInfo, logger)
+		if !ok {
+			return // ctx cancelled
+		}
+		res = next
+	}
+}
+
+// reserveWithBackoff reconnects to the hub if needed and reserves a relay slot,
+// retrying with capped exponential backoff until it succeeds or ctx is done.
+func reserveWithBackoff(ctx context.Context, h host.Host, hubInfo peer.AddrInfo, logger *log.Logger) (*relayclient.Reservation, bool) {
+	backoff := time.Second
+	for {
+		if err := h.Connect(ctx, hubInfo); err != nil {
+			logf(logger, "relay reservation: reconnect hub failed: %v", err)
+		} else if res, err := relayclient.Reserve(ctx, h, hubInfo); err != nil {
+			logf(logger, "relay reservation: reserve failed: %v", err)
+		} else {
+			logReservation(logger, res)
+			return res, true
+		}
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
 }

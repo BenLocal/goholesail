@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -33,6 +35,7 @@ func newHostCmd() *cobra.Command {
 				Seed: seed, LocalPort: live, HubAddr: hubAddr,
 				Private: private, Secret: secret,
 				Name: name, Tags: tags,
+				Logger: log.New(os.Stderr, "[host] ", log.LstdFlags),
 			})
 			if err != nil {
 				return err
