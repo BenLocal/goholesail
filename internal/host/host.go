@@ -40,6 +40,12 @@ type Options struct {
 // Run starts the host: builds identity, connects to the hub, reserves a relay
 // slot, and serves tunnel streams. It returns the libp2p host and the ghs://
 // connection string a client should use. The caller owns closing the host.
+//
+// Teardown contract: when Name+Registry are set, the registry lifecycle (renew
+// loop + deregister) is bound to ctx, not to the returned host. Cancel ctx to
+// tear a registered host down cleanly; closing the host alone leaves the renew
+// goroutine running and the directory entry live. The CLI honors this by
+// pairing signal.NotifyContext's cancel with h.Close().
 func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 	priv, err := keyFor(opts.Seed)
 	if err != nil {
@@ -121,6 +127,11 @@ func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 			_ = h.Close()
 			return nil, "", fmt.Errorf("host: register: %w", err)
 		}
+		// Lifetime is bound to ctx (see Run's teardown contract). On cancel we
+		// make a best-effort deregister — an unbounded ws round-trip with no
+		// deadline, so an unreachable registry at shutdown leaves the entry to
+		// expire by TTL rather than being cleanly removed. Acceptable for M3
+		// (resilience is a non-goal); a bounded shutdown is M4 work.
 		go func() {
 			t := time.NewTicker(30 * time.Second)
 			defer t.Stop()
