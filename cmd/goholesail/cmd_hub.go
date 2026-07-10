@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,7 +14,6 @@ import (
 
 func newHubCmd() *cobra.Command {
 	var listen string
-	var registryListen string
 	var seed string
 	cmd := &cobra.Command{
 		Use:   "hub",
@@ -27,27 +25,20 @@ func newHubCmd() *cobra.Command {
 			}
 			defer h.Close()
 			hub.AttachConnLogger(h, log.New(os.Stderr, "[hub] ", log.LstdFlags))
+			// Registry is always on: it is just a stream protocol on the hub
+			// host now (no extra port).
+			srv := registry.NewServerWithLogger(registry.NewStore(), log.New(os.Stderr, "[registry] ", log.LstdFlags))
+			h.SetStreamHandler(registry.RegistryProtocolID, srv.HandleStream)
 			fmt.Println("hub listening; dial addresses:")
 			for _, a := range hub.P2pAddrs(h) {
 				fmt.Println("  " + a)
 			}
-			if registryListen != "" {
-				regLog := log.New(os.Stderr, "[registry] ", log.LstdFlags)
-				srv := &http.Server{Addr: registryListen, Handler: registry.NewServerWithLogger(registry.NewStore(), regLog)}
-				go func() {
-					if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-						fmt.Fprintln(cmd.ErrOrStderr(), "registry server:", err)
-					}
-				}()
-				defer srv.Close()
-				fmt.Println("registry ws on " + registryListen + " (path /reg, GET /services)")
-			}
+			fmt.Println("registry: on (protocol " + string(registry.RegistryProtocolID) + ")")
 			waitForSignal()
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&listen, "listen", "/ip4/0.0.0.0/tcp/4001", "libp2p listen multiaddr")
-	cmd.Flags().StringVar(&registryListen, "registry-listen", "", "registry HTTP listen addr, e.g. :8080 (empty = relay only)")
 	cmd.Flags().StringVar(&seed, "seed", "", "stable identity seed (empty = ephemeral; set it to keep --hub stable across restarts)")
 	return cmd
 }

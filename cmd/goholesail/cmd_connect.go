@@ -12,9 +12,9 @@ import (
 
 func newConnectCmd() *cobra.Command {
 	var (
-		port     int
-		registry string
-		secret   string
+		port    int
+		hubAddr string
+		secret  string
 	)
 	cmd := &cobra.Command{
 		Use:   "connect <connection-string|name>",
@@ -25,7 +25,7 @@ func newConnectCmd() *cobra.Command {
 			defer stop()
 			h, ln, err := client.Run(ctx, client.Options{
 				ConnString: args[0], LocalPort: port,
-				Registry: registry, Secret: secret,
+				Hub: hubAddr, Secret: secret,
 			})
 			if err != nil {
 				return err
@@ -38,7 +38,7 @@ func newConnectCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&port, "port", 0, "local TCP port to bind (0 = random)")
-	cmd.Flags().StringVar(&registry, "registry", "", "registry ws url (required when passing a name)")
+	cmd.Flags().StringVar(&hubAddr, "hub", "", "hub /p2p multiaddr (required when passing a name)")
 	cmd.Flags().StringVar(&secret, "secret", "", "shared secret for a private host")
 	return cmd
 }

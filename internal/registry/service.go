@@ -3,6 +3,12 @@
 // supply the secret out-of-band via --secret.
 package registry
 
+import "github.com/libp2p/go-libp2p/core/protocol"
+
+// RegistryProtocolID is the libp2p stream protocol the hub serves for the
+// service directory. One stream carries one request/response round-trip.
+const RegistryProtocolID protocol.ID = "/goholesail/registry/1.0.0"
+
 // Service is a directory entry. It deliberately has no Secret field.
 type Service struct {
 	Name    string   `json:"name"`

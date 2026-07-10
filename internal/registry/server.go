@@ -3,20 +3,16 @@ package registry
 import (
 	"encoding/json"
 	"log"
-	"net/http"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/libp2p/go-libp2p/core/network"
 )
 
-// Server exposes a Store over websockets (path /reg) plus a read-only JSON
-// listing (GET /services). It is a plain http.Handler, so the hub mounts it on
-// whatever --registry-listen address it chooses.
+// Server serves the registry over the libp2p RegistryProtocolID stream protocol.
+// The hub mounts HandleStream on its host with SetStreamHandler.
 type Server struct {
-	store    *Store
-	upgrader websocket.Upgrader
-	mux      *http.ServeMux
-	logger   *log.Logger // nil => silent; the hub injects one, tests stay quiet
+	store  *Store
+	logger *log.Logger // nil => silent; the hub injects one, tests stay quiet
 }
 
 // NewServer wraps a Store with no logging. If store is nil a fresh one is
@@ -32,10 +28,7 @@ func NewServerWithLogger(store *Store, logger *log.Logger) *Server {
 	if store == nil {
 		store = NewStore()
 	}
-	s := &Server{store: store, mux: http.NewServeMux(), logger: logger}
-	s.mux.HandleFunc("/reg", s.handleWS)
-	s.mux.HandleFunc("/services", s.handleList)
-	return s
+	return &Server{store: store, logger: logger}
 }
 
 // logf logs a request event when a logger was injected, else it is a no-op.
@@ -45,43 +38,20 @@ func (s *Server) logf(format string, args ...any) {
 	}
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
-
-func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+// HandleStream serves one registry request on a libp2p stream: read a Msg,
+// dispatch, write the response, then close. libp2p authenticates the remote
+// peer (Noise), so stream.Conn().RemotePeer() is the true caller identity.
+func (s *Server) HandleStream(stream network.Stream) {
+	defer stream.Close()
+	s.logf("stream from %s", stream.Conn().RemotePeer())
+	var m Msg
+	if err := json.NewDecoder(stream).Decode(&m); err != nil {
+		_ = stream.Reset()
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(s.store.List(r.URL.Query().Get("tag")))
-}
-
-func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
-	c, err := s.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	defer c.Close()
-	s.logf("ws conn open from %s", r.RemoteAddr)
-	defer s.logf("ws conn close from %s", r.RemoteAddr)
-	// One reader, one writer per connection: request in, response out. No
-	// server-initiated pushes (subscribe is deferred), so no write mutex needed.
-	//
-	// TODO(resilience, M4): this loop sets no read deadline and runs no
-	// ping/pong keepalive, so a client that connects and then goes idle (or is
-	// silently dropped at the TCP layer) parks this goroutine and its FD in
-	// ReadJSON until an error arrives, which may be never. The default upgrader
-	// also accepts any Origin. Both are accepted debt for M3 — an internal tool
-	// where resilience is an explicit non-goal — and belong with M4's hardening.
-	for {
-		var m Msg
-		if err := c.ReadJSON(&m); err != nil {
-			return
-		}
-		if resp, ok := s.handle(m); ok {
-			if err := c.WriteJSON(resp); err != nil {
-				return
-			}
+	if resp, ok := s.handle(m); ok {
+		if err := json.NewEncoder(stream).Encode(resp); err != nil {
+			_ = stream.Reset()
 		}
 	}
 }

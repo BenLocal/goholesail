@@ -32,20 +32,20 @@ type Options struct {
 	Private bool   // require an HMAC token from clients
 	Secret  string // shared secret; if Private and empty, one is generated
 
-	Name     string   // registry name; empty => no auto-register
-	Registry string   // registry ws url, e.g. ws://hub:8080/reg
-	Tags     []string // registry tags
+	Name string   // registry name; empty => no auto-register (registers to --hub)
+	Tags []string // registry tags
 }
 
 // Run starts the host: builds identity, connects to the hub, reserves a relay
 // slot, and serves tunnel streams. It returns the libp2p host and the ghs://
 // connection string a client should use. The caller owns closing the host.
 //
-// Teardown contract: when Name+Registry are set, the registry lifecycle (renew
-// loop + deregister) is bound to ctx, not to the returned host. Cancel ctx to
-// tear a registered host down cleanly; closing the host alone leaves the renew
-// goroutine running and the directory entry live. The CLI honors this by
-// pairing signal.NotifyContext's cancel with h.Close().
+// Teardown contract: when Name is set the host auto-registers with the hub's
+// registry, and that lifecycle (renew loop + deregister) is bound to ctx, not to
+// the returned host. Cancel ctx to tear a registered host down cleanly; closing
+// the host alone leaves the renew goroutine running and the directory entry
+// live. The CLI honors this by pairing signal.NotifyContext's cancel with
+// h.Close().
 func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 	priv, err := keyFor(opts.Seed)
 	if err != nil {
@@ -109,12 +109,10 @@ func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 		_ = h.Close()
 		return nil, "", fmt.Errorf("host: encode connstr: %w", err)
 	}
-	if opts.Name != "" && opts.Registry != "" {
-		rc, err := registry.Dial(ctx, opts.Registry)
-		if err != nil {
-			_ = h.Close()
-			return nil, "", fmt.Errorf("host: dial registry: %w", err)
-		}
+	if opts.Name != "" {
+		// The registry lives on the hub itself; reuse the connection already
+		// established above (Connect + Reserve). No secret is ever sent.
+		rc := registry.NewClient(h, hubInfo.ID)
 		svc := registry.Service{
 			Name:    opts.Name,
 			PeerID:  h.ID().String(),
@@ -122,27 +120,23 @@ func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 			Private: opts.Private,
 			Tags:    opts.Tags,
 		}
-		if err := rc.Register(svc, 90*time.Second); err != nil {
-			_ = rc.Close()
+		if err := rc.Register(ctx, svc, 90*time.Second); err != nil {
 			_ = h.Close()
 			return nil, "", fmt.Errorf("host: register: %w", err)
 		}
 		// Lifetime is bound to ctx (see Run's teardown contract). On cancel we
-		// make a best-effort deregister — an unbounded ws round-trip with no
-		// deadline, so an unreachable registry at shutdown leaves the entry to
-		// expire by TTL rather than being cleanly removed. Acceptable for M3
-		// (resilience is a non-goal); a bounded shutdown is M4 work.
+		// make a best-effort deregister; if the hub is unreachable at shutdown
+		// the entry lingers until its TTL expires. A bounded shutdown is M4 work.
 		go func() {
 			t := time.NewTicker(30 * time.Second)
 			defer t.Stop()
 			for {
 				select {
 				case <-ctx.Done():
-					_ = rc.Deregister(opts.Name)
-					_ = rc.Close()
+					_ = rc.Deregister(context.Background(), opts.Name)
 					return
 				case <-t.C:
-					_ = rc.Renew(opts.Name, 90*time.Second)
+					_ = rc.Renew(ctx, opts.Name, 90*time.Second)
 				}
 			}
 		}()

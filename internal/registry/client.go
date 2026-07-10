@@ -2,37 +2,42 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
-// Client is a registry ws client. Its request/response calls are serialized, so
-// it is safe to share between a host's register call and its renew goroutine.
+// Client talks to a hub's registry over the RegistryProtocolID stream protocol.
+// It is stateless: each call opens a fresh stream on the (already-open)
+// libp2p connection to the hub, so it is safe for concurrent use.
 type Client struct {
-	conn *websocket.Conn
-	mu   sync.Mutex
+	h   host.Host
+	hub peer.ID
 }
 
-// Dial connects to a registry ws endpoint, e.g. "ws://hub:8080/reg".
-func Dial(ctx context.Context, url string) (*Client, error) {
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
+// NewClient returns a registry client that talks to hub over h. The caller is
+// responsible for having connected h to hub (host.Connect) before use.
+func NewClient(h host.Host, hub peer.ID) *Client {
+	return &Client{h: h, hub: hub}
+}
+
+// roundtrip opens one stream, writes m, reads one response, and closes.
+func (c *Client) roundtrip(ctx context.Context, m Msg) (Msg, error) {
+	s, err := c.h.NewStream(ctx, c.hub, RegistryProtocolID)
 	if err != nil {
-		return nil, fmt.Errorf("registry: dial %s: %w", url, err)
+		return Msg{}, fmt.Errorf("registry: open stream: %w", err)
 	}
-	return &Client{conn: c}, nil
-}
-
-func (c *Client) roundtrip(m Msg) (Msg, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.conn.WriteJSON(m); err != nil {
+	defer s.Close()
+	if err := json.NewEncoder(s).Encode(m); err != nil {
+		_ = s.Reset()
 		return Msg{}, fmt.Errorf("registry: write: %w", err)
 	}
 	var resp Msg
-	if err := c.conn.ReadJSON(&resp); err != nil {
+	if err := json.NewDecoder(s).Decode(&resp); err != nil {
+		_ = s.Reset()
 		return Msg{}, fmt.Errorf("registry: read: %w", err)
 	}
 	if resp.Type == "error" {
@@ -55,26 +60,26 @@ func ttlSeconds(ttl time.Duration) int {
 }
 
 // Register stores a service with the given TTL.
-func (c *Client) Register(svc Service, ttl time.Duration) error {
-	_, err := c.roundtrip(Msg{Type: "register", Service: &svc, TTLSeconds: ttlSeconds(ttl)})
+func (c *Client) Register(ctx context.Context, svc Service, ttl time.Duration) error {
+	_, err := c.roundtrip(ctx, Msg{Type: "register", Service: &svc, TTLSeconds: ttlSeconds(ttl)})
 	return err
 }
 
 // Renew refreshes a service's TTL by name.
-func (c *Client) Renew(name string, ttl time.Duration) error {
-	_, err := c.roundtrip(Msg{Type: "renew", Name: name, TTLSeconds: ttlSeconds(ttl)})
+func (c *Client) Renew(ctx context.Context, name string, ttl time.Duration) error {
+	_, err := c.roundtrip(ctx, Msg{Type: "renew", Name: name, TTLSeconds: ttlSeconds(ttl)})
 	return err
 }
 
 // Deregister removes a service by name.
-func (c *Client) Deregister(name string) error {
-	_, err := c.roundtrip(Msg{Type: "deregister", Name: name})
+func (c *Client) Deregister(ctx context.Context, name string) error {
+	_, err := c.roundtrip(ctx, Msg{Type: "deregister", Name: name})
 	return err
 }
 
 // Resolve returns the Service registered under name.
-func (c *Client) Resolve(name string) (Service, error) {
-	resp, err := c.roundtrip(Msg{Type: "resolve", Name: name})
+func (c *Client) Resolve(ctx context.Context, name string) (Service, error) {
+	resp, err := c.roundtrip(ctx, Msg{Type: "resolve", Name: name})
 	if err != nil {
 		return Service{}, err
 	}
@@ -84,5 +89,11 @@ func (c *Client) Resolve(name string) (Service, error) {
 	return *resp.Service, nil
 }
 
-// Close closes the underlying connection.
-func (c *Client) Close() error { return c.conn.Close() }
+// List returns the services in the directory, optionally filtered by tag.
+func (c *Client) List(ctx context.Context, tag string) ([]Service, error) {
+	resp, err := c.roundtrip(ctx, Msg{Type: "list", Tag: tag})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Services, nil
+}

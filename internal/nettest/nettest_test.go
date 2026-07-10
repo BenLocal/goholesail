@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -200,33 +198,29 @@ func TestRegistryNameResolutionPrivate(t *testing.T) {
 	defer cancel()
 	echoPort := startEcho(t)
 
-	// Registry server.
-	ts := httptest.NewServer(registry.NewServer(registry.NewStore()))
-	t.Cleanup(ts.Close)
-	regURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/reg"
-
-	// Hub.
+	// Hub with the registry protocol mounted (as the hub binary does).
 	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
 	t.Cleanup(func() { _ = h.Close() })
+	h.SetStreamHandler(registry.RegistryProtocolID, registry.NewServer(registry.NewStore()).HandleStream)
 	hubAddr := ghub.P2pAddrs(h)[0]
 
-	// Host: private + auto-register by name (secret NOT sent to registry).
+	// Host: private + auto-register by name to the hub (secret NOT sent).
 	hostH, _, err := ghost.Run(ctx, ghost.Options{
 		Seed: "reg-seed", LocalPort: echoPort, HubAddr: hubAddr,
 		Private: true, Secret: "reg-secret",
-		Name: "home-ssh", Registry: regURL, Tags: []string{"ssh"},
+		Name: "home-ssh", Tags: []string{"ssh"},
 	})
 	if err != nil {
 		t.Fatalf("host run: %v", err)
 	}
 	t.Cleanup(func() { _ = hostH.Close() })
 
-	// Client: resolve by name + supply the secret out-of-band.
+	// Client: resolve by name via --hub + supply the secret out-of-band.
 	clientH, ln, err := gclient.Run(ctx, gclient.Options{
-		ConnString: "home-ssh", Registry: regURL, Secret: "reg-secret", LocalPort: 0,
+		ConnString: "home-ssh", Hub: hubAddr, Secret: "reg-secret", LocalPort: 0,
 	})
 	if err != nil {
 		t.Fatalf("client run: %v", err)
@@ -254,20 +248,17 @@ func TestRegistryPrivateWithoutSecretFails(t *testing.T) {
 	defer cancel()
 	echoPort := startEcho(t)
 
-	ts := httptest.NewServer(registry.NewServer(registry.NewStore()))
-	t.Cleanup(ts.Close)
-	regURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/reg"
-
 	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
 	t.Cleanup(func() { _ = h.Close() })
+	h.SetStreamHandler(registry.RegistryProtocolID, registry.NewServer(registry.NewStore()).HandleStream)
 	hubAddr := ghub.P2pAddrs(h)[0]
 
 	hostH, _, err := ghost.Run(ctx, ghost.Options{
 		Seed: "reg-seed2", LocalPort: echoPort, HubAddr: hubAddr,
-		Private: true, Secret: "s", Name: "svc", Registry: regURL,
+		Private: true, Secret: "s", Name: "svc",
 	})
 	if err != nil {
 		t.Fatalf("host run: %v", err)
@@ -275,7 +266,7 @@ func TestRegistryPrivateWithoutSecretFails(t *testing.T) {
 	t.Cleanup(func() { _ = hostH.Close() })
 
 	// Resolve a private service without --secret -> client.Run must error.
-	if _, _, err := gclient.Run(ctx, gclient.Options{ConnString: "svc", Registry: regURL, LocalPort: 0}); err == nil {
+	if _, _, err := gclient.Run(ctx, gclient.Options{ConnString: "svc", Hub: hubAddr, LocalPort: 0}); err == nil {
 		t.Fatal("connecting to a private service without --secret should fail")
 	}
 }

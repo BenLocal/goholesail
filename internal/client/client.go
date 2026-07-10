@@ -25,31 +25,14 @@ type Options struct {
 	ConnString string // ghs://... OR a bare registry name
 	LocalPort  int
 
-	Secret   string // secret for private hosts
-	Registry string // registry ws url; required when ConnString is a name
+	Secret string // secret for private hosts
+	Hub    string // hub /p2p multiaddr; required when ConnString is a bare name
 }
 
 // Run resolves the connection string, dials the host via the relay, and serves
 // a local listener until ctx is cancelled. It returns the libp2p host and the
 // bound listener (pass LocalPort 0 for an OS-assigned port, useful in tests).
 func Run(ctx context.Context, opts Options) (host.Host, net.Listener, error) {
-	cs, err := resolveConnString(ctx, opts)
-	if err != nil {
-		return nil, nil, err
-	}
-	secret := cs.Secret
-	if secret == "" {
-		secret = opts.Secret
-	}
-	hostID, err := peer.Decode(cs.HostID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("client: bad host id: %w", err)
-	}
-	hubInfo, err := peer.AddrInfoFromString(cs.Hub)
-	if err != nil {
-		return nil, nil, fmt.Errorf("client: parse hub addr: %w", err)
-	}
-
 	priv, err := identity.Random()
 	if err != nil {
 		return nil, nil, err
@@ -62,8 +45,26 @@ func Run(ctx context.Context, opts Options) (host.Host, net.Listener, error) {
 		return nil, nil, fmt.Errorf("client: new: %w", err)
 	}
 
+	// A bare name is resolved over the hub's registry, which needs h connected
+	// to the hub first; a ghs:// string is decoded locally.
+	cs, hubInfo, err := resolveConnString(ctx, h, opts)
+	if err != nil {
+		_ = h.Close()
+		return nil, nil, err
+	}
+	secret := cs.Secret
+	if secret == "" {
+		secret = opts.Secret
+	}
+	hostID, err := peer.Decode(cs.HostID)
+	if err != nil {
+		_ = h.Close()
+		return nil, nil, fmt.Errorf("client: bad host id: %w", err)
+	}
+
 	// Connect to the relay first so its transport address is in the peerstore,
-	// then the short circuit address below is dialable.
+	// then the short circuit address below is dialable. Idempotent if the name
+	// path already connected during resolution.
 	if err := h.Connect(ctx, *hubInfo); err != nil {
 		_ = h.Close()
 		return nil, nil, fmt.Errorf("client: connect hub: %w", err)
@@ -119,33 +120,43 @@ func Run(ctx context.Context, opts Options) (host.Host, net.Listener, error) {
 	return h, ln, nil
 }
 
-// resolveConnString turns Options.ConnString into a ConnString: either by
-// decoding a ghs:// string directly, or by resolving a bare name against the
-// registry and combining it with the locally-supplied --secret.
-func resolveConnString(ctx context.Context, opts Options) (connstr.ConnString, error) {
+// resolveConnString turns Options.ConnString into a ConnString plus the hub's
+// AddrInfo: either by decoding a ghs:// string directly, or by resolving a bare
+// name against the hub's registry (over h) and combining it with --hub/--secret.
+func resolveConnString(ctx context.Context, h host.Host, opts Options) (connstr.ConnString, *peer.AddrInfo, error) {
 	if strings.HasPrefix(opts.ConnString, "ghs://") {
-		return connstr.Decode(opts.ConnString)
+		cs, err := connstr.Decode(opts.ConnString)
+		if err != nil {
+			return connstr.ConnString{}, nil, fmt.Errorf("client: decode connstr: %w", err)
+		}
+		hubInfo, err := peer.AddrInfoFromString(cs.Hub)
+		if err != nil {
+			return connstr.ConnString{}, nil, fmt.Errorf("client: parse hub addr: %w", err)
+		}
+		return cs, hubInfo, nil
 	}
-	if opts.Registry == "" {
-		return connstr.ConnString{}, fmt.Errorf("client: %q is not a ghs:// string; pass --registry to resolve it as a name", opts.ConnString)
+	if opts.Hub == "" {
+		return connstr.ConnString{}, nil, fmt.Errorf("client: %q is not a ghs:// string; pass --hub to resolve it as a name", opts.ConnString)
 	}
-	rc, err := registry.Dial(ctx, opts.Registry)
+	hubInfo, err := peer.AddrInfoFromString(opts.Hub)
 	if err != nil {
-		return connstr.ConnString{}, err
+		return connstr.ConnString{}, nil, fmt.Errorf("client: parse hub addr: %w", err)
 	}
-	defer rc.Close()
-	svc, err := rc.Resolve(opts.ConnString)
+	if err := h.Connect(ctx, *hubInfo); err != nil {
+		return connstr.ConnString{}, nil, fmt.Errorf("client: connect hub: %w", err)
+	}
+	svc, err := registry.NewClient(h, hubInfo.ID).Resolve(ctx, opts.ConnString)
 	if err != nil {
-		return connstr.ConnString{}, err
+		return connstr.ConnString{}, nil, err
 	}
 	if svc.Private && opts.Secret == "" {
-		return connstr.ConnString{}, fmt.Errorf("client: service %q is private; pass --secret", svc.Name)
+		return connstr.ConnString{}, nil, fmt.Errorf("client: service %q is private; pass --secret", svc.Name)
 	}
 	return connstr.ConnString{
 		Version: 1,
 		Private: svc.Private,
 		HostID:  svc.PeerID,
-		Hub:     svc.Hub,
+		Hub:     opts.Hub,
 		Secret:  opts.Secret,
-	}, nil
+	}, hubInfo, nil
 }

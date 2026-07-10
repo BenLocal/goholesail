@@ -12,14 +12,13 @@ import (
 
 func newHostCmd() *cobra.Command {
 	var (
-		live     int
-		seed     string
-		hubAddr  string
-		private  bool
-		secret   string
-		name     string
-		registry string
-		tags     []string
+		live    int
+		seed    string
+		hubAddr string
+		private bool
+		secret  string
+		name    string
+		tags    []string
 	)
 	cmd := &cobra.Command{
 		Use:   "host",
@@ -33,7 +32,7 @@ func newHostCmd() *cobra.Command {
 			h, cs, err := host.Run(ctx, host.Options{
 				Seed: seed, LocalPort: live, HubAddr: hubAddr,
 				Private: private, Secret: secret,
-				Name: name, Registry: registry, Tags: tags,
+				Name: name, Tags: tags,
 			})
 			if err != nil {
 				return err
@@ -51,7 +50,6 @@ func newHostCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&private, "private", false, "require a shared secret from clients")
 	cmd.Flags().StringVar(&secret, "secret", "", "shared secret (with --private; empty => generated)")
 	cmd.Flags().StringVar(&name, "name", "", "registry name to publish under")
-	cmd.Flags().StringVar(&registry, "registry", "", "registry ws url, e.g. ws://hub:8080/reg")
 	cmd.Flags().StringSliceVar(&tags, "tags", nil, "registry tags (comma-separated)")
 	_ = cmd.MarkFlagRequired("live")
 	_ = cmd.MarkFlagRequired("hub")
