@@ -75,6 +75,13 @@ func Run(ctx context.Context, opts Options) (host.Host, net.Listener, error) {
 		return nil, nil, fmt.Errorf("client: listen: %w", err)
 	}
 
+	// Close the listener when ctx is cancelled so the accept loop below exits,
+	// honoring the "serves ... until ctx is cancelled" contract.
+	go func() {
+		<-ctx.Done()
+		_ = ln.Close()
+	}()
+
 	go func() {
 		for {
 			conn, err := ln.Accept()
