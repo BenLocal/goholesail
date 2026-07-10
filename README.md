@@ -31,6 +31,47 @@ ssh -p 2222 user@127.0.0.1
 goholesail list --hub <hub-/p2p-addr> [--tag ssh]
 ```
 
+## Deploying a host
+
+Run a long-lived `host` tunnel that exposes a service on the machine's loopback
+(e.g. `sshd` on `127.0.0.1:22`) through a hub. Two options:
+
+### Docker (Linux)
+
+```bash
+cp .env.host.example .env.host    # edit: at least LIVE and HUB
+docker compose -f docker-compose.host.yaml up -d --build
+docker compose -f docker-compose.host.yaml logs -f   # prints the ghs:// string
+```
+
+Uses `network_mode: host`, so `127.0.0.1:<LIVE>` inside the container is this
+machine's loopback. All host flags come from `.env.host`
+(`LIVE/HUB/SEED/PRIVATE/SECRET/NAME/TAGS`).
+
+### Native (systemd or supervisord)
+
+Install the released binary and register it as a service — you pick the manager:
+
+```bash
+sudo sh -c "$(curl -fsSL \
+  https://raw.githubusercontent.com/BenLocal/goholesail/main/deploy/install.sh)" -- \
+  --service-manager systemd \
+  --hub /ip4/203.0.113.10/tcp/4001/p2p/12D3KooW... --live 22 \
+  --private --secret s3cr3t --name home-ssh --tags ssh
+```
+
+- `--service-manager systemd|supervisor` chooses the service type.
+- The binary is downloaded from the latest GitHub Release (or `--version vX.Y.Z`);
+  use `--binary /path/to/goholesail` to install a local build instead.
+- Config lives in `/etc/goholesail/host.env`; edit it and restart the service
+  (`systemctl restart goholesail-host` or `supervisorctl restart goholesail-host`)
+  to change flags.
+- The shared secret is passed to `goholesail host` as a CLI flag, so it is
+  visible to local users via the process list (`ps`); `host.env` itself is
+  stored mode 0600.
+
+Release binaries (Linux amd64/arm64) are published on every `v*` tag.
+
 ## Status
 
 M1+M2 (public TCP tunnel), M3 (private-mode HMAC auth + service registry with
