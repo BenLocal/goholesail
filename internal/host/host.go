@@ -13,6 +13,7 @@ import (
 
 	"github.com/BenLocal/goholesail/internal/connstr"
 	"github.com/BenLocal/goholesail/internal/identity"
+	"github.com/BenLocal/goholesail/internal/registry"
 	"github.com/BenLocal/goholesail/internal/tunnel"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -30,6 +31,10 @@ type Options struct {
 
 	Private bool   // require an HMAC token from clients
 	Secret  string // shared secret; if Private and empty, one is generated
+
+	Name     string   // registry name; empty => no auto-register
+	Registry string   // registry ws url, e.g. ws://hub:8080/reg
+	Tags     []string // registry tags
 }
 
 // Run starts the host: builds identity, connects to the hub, reserves a relay
@@ -97,6 +102,39 @@ func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 	if err != nil {
 		_ = h.Close()
 		return nil, "", fmt.Errorf("host: encode connstr: %w", err)
+	}
+	if opts.Name != "" && opts.Registry != "" {
+		rc, err := registry.Dial(ctx, opts.Registry)
+		if err != nil {
+			_ = h.Close()
+			return nil, "", fmt.Errorf("host: dial registry: %w", err)
+		}
+		svc := registry.Service{
+			Name:    opts.Name,
+			PeerID:  h.ID().String(),
+			Hub:     opts.HubAddr,
+			Private: opts.Private,
+			Tags:    opts.Tags,
+		}
+		if err := rc.Register(svc, 90*time.Second); err != nil {
+			_ = rc.Close()
+			_ = h.Close()
+			return nil, "", fmt.Errorf("host: register: %w", err)
+		}
+		go func() {
+			t := time.NewTicker(30 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					_ = rc.Deregister(opts.Name)
+					_ = rc.Close()
+					return
+				case <-t.C:
+					_ = rc.Renew(opts.Name, 90*time.Second)
+				}
+			}
+		}()
 	}
 	return h, str, nil
 }
