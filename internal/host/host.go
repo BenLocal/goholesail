@@ -77,11 +77,6 @@ func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 		return nil, "", fmt.Errorf("host: reserve relay slot: %w", err)
 	}
 	logReservation(opts.Logger, res)
-	// Keep the reservation alive: it expires after the relay's ReservationTTL
-	// (default 1h) and is lost if the host<->hub connection drops, after which
-	// the relay can no longer forward circuits to this host. Bound to ctx, like
-	// the registry renew loop below.
-	go maintainReservation(ctx, h, *hubInfo, res, opts.Logger)
 
 	secret := ""
 	if opts.Private {
@@ -151,6 +146,12 @@ func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 			}
 		}()
 	}
+	// Keep the reservation alive: it expires after the relay's ReservationTTL
+	// (default 1h) and is lost if the host<->hub connection drops, after which
+	// the relay can no longer forward circuits to this host. Launched only after
+	// every fallible step above, so a Run that errors out (and closes h) does not
+	// leak this goroutine. Bound to ctx, like the registry renew loop above.
+	go maintainReservation(ctx, h, *hubInfo, res, opts.Logger)
 	return h, str, nil
 }
 

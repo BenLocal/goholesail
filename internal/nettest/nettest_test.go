@@ -478,6 +478,11 @@ func TestConnectLoggingAndRedial(t *testing.T) {
 	for _, c := range clientH.Network().ConnsToPeer(hostID) {
 		_ = c.Close()
 	}
+	// Also drop the host's peerstore addrs, so the second round-trip can only
+	// succeed if the accept loop re-adds the circuit addr before NewStream. The
+	// initial Connect planted the circuit addr under a 2-min TempAddrTTL that
+	// would otherwise still be present seconds later, masking the fix.
+	clientH.Peerstore().ClearAddrs(hostID)
 	roundTrip(t, ln.Addr().String(), "two", "echo:two\n")
 }
 
