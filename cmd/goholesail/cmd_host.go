@@ -18,6 +18,9 @@ func newHostCmd() *cobra.Command {
 		Use:   "host",
 		Short: "Expose a local TCP port",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if live < 1 || live > 65535 {
+				return fmt.Errorf("--live must be a valid TCP port (1-65535), got %d", live)
+			}
 			ctx := context.Background()
 			h, cs, err := host.Run(ctx, host.Options{Seed: seed, LocalPort: live, HubAddr: hub})
 			if err != nil {

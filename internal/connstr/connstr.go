@@ -1,7 +1,9 @@
 // Package connstr encodes and decodes goholesail connection strings.
 //
 // Format: ghs://<mode><version>_<base64url(json)>
-//   mode 's' = private (Secret required), 'p' = public.
+//
+//	mode 's' = private (Secret required), 'p' = public.
+//
 // The mode/version prefix is a fast, human-visible hint; the authoritative
 // values live in the JSON payload and are cross-checked on decode.
 package connstr
