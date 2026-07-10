@@ -2,16 +2,19 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/BenLocal/goholesail/internal/hub"
+	"github.com/BenLocal/goholesail/internal/registry"
 	"github.com/spf13/cobra"
 )
 
 func newHubCmd() *cobra.Command {
 	var listen string
+	var registryListen string
 	cmd := &cobra.Command{
 		Use:   "hub",
 		Short: "Run the relay/rendezvous hub",
@@ -25,11 +28,22 @@ func newHubCmd() *cobra.Command {
 			for _, a := range hub.P2pAddrs(h) {
 				fmt.Println("  " + a)
 			}
+			if registryListen != "" {
+				srv := &http.Server{Addr: registryListen, Handler: registry.NewServer(registry.NewStore())}
+				go func() {
+					if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+						fmt.Fprintln(cmd.ErrOrStderr(), "registry server:", err)
+					}
+				}()
+				defer srv.Close()
+				fmt.Println("registry ws on " + registryListen + " (path /reg, GET /services)")
+			}
 			waitForSignal()
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&listen, "listen", "/ip4/0.0.0.0/tcp/4001", "libp2p listen multiaddr")
+	cmd.Flags().StringVar(&registryListen, "registry-listen", "", "registry HTTP listen addr, e.g. :8080 (empty = relay only)")
 	return cmd
 }
 

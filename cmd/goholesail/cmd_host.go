@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os/signal"
+	"syscall"
 
 	"github.com/BenLocal/goholesail/internal/host"
 	"github.com/spf13/cobra"
@@ -10,9 +12,14 @@ import (
 
 func newHostCmd() *cobra.Command {
 	var (
-		live int
-		seed string
-		hub  string
+		live     int
+		seed     string
+		hubAddr  string
+		private  bool
+		secret   string
+		name     string
+		registry string
+		tags     []string
 	)
 	cmd := &cobra.Command{
 		Use:   "host",
@@ -21,21 +28,31 @@ func newHostCmd() *cobra.Command {
 			if live < 1 || live > 65535 {
 				return fmt.Errorf("--live must be a valid TCP port (1-65535), got %d", live)
 			}
-			ctx := context.Background()
-			h, cs, err := host.Run(ctx, host.Options{Seed: seed, LocalPort: live, HubAddr: hub})
+			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+			h, cs, err := host.Run(ctx, host.Options{
+				Seed: seed, LocalPort: live, HubAddr: hubAddr,
+				Private: private, Secret: secret,
+				Name: name, Registry: registry, Tags: tags,
+			})
 			if err != nil {
 				return err
 			}
 			defer h.Close()
 			fmt.Println("connection string:")
 			fmt.Println("  " + cs)
-			waitForSignal()
+			<-ctx.Done()
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&live, "live", 0, "local TCP port to expose (required)")
 	cmd.Flags().StringVar(&seed, "seed", "", "stable identity seed (empty = ephemeral)")
-	cmd.Flags().StringVar(&hub, "hub", "", "hub /p2p multiaddr (required)")
+	cmd.Flags().StringVar(&hubAddr, "hub", "", "hub /p2p multiaddr (required)")
+	cmd.Flags().BoolVar(&private, "private", false, "require a shared secret from clients")
+	cmd.Flags().StringVar(&secret, "secret", "", "shared secret (with --private; empty => generated)")
+	cmd.Flags().StringVar(&name, "name", "", "registry name to publish under")
+	cmd.Flags().StringVar(&registry, "registry", "", "registry ws url, e.g. ws://hub:8080/reg")
+	cmd.Flags().StringSliceVar(&tags, "tags", nil, "registry tags (comma-separated)")
 	_ = cmd.MarkFlagRequired("live")
 	_ = cmd.MarkFlagRequired("hub")
 	return cmd
