@@ -1,0 +1,18 @@
+# Keep the build context small and secret-free.
+.git
+.github
+docs
+*.md
+LICENSE
+
+# Docker / compose files aren't needed inside the build.
+Dockerfile
+docker-compose.yaml
+.dockerignore
+
+# Never ship local env (may hold a real HUB_SEED).
+.env
+
+# Built binaries.
+/goholesail
+/cmd/goholesail/goholesail

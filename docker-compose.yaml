@@ -1,0 +1,39 @@
+# Bring the goholesail hub up with a single command:
+#   cp .env.example .env   # then edit .env (at least set a stable HUB_SEED)
+#   docker compose up -d --build
+#
+# Inspect logs (the hub logs relay/registry events to stderr):
+#   docker compose logs -f
+#
+# The dialable address to hand out as --hub is printed on startup:
+#   docker compose logs hub | grep -A3 'dial addresses'
+# (replace 0.0.0.0 in that address with the server's public IP).
+
+services:
+  hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: goholesail-hub:latest
+    container_name: goholesail-hub
+    restart: unless-stopped
+
+    # Publish the hub's TCP port. The published host port MUST equal the listen
+    # port: the hub advertises its listen port inside its /p2p dial address, so
+    # a client dialing that address needs the same port reachable on the host.
+    # HUB_PUBLISH_ADDR selects the host interface (0.0.0.0 = public).
+    ports:
+      - "${HUB_PUBLISH_ADDR:-0.0.0.0}:${HUB_PORT:-4001}:${HUB_PORT:-4001}/tcp"
+
+    # Override the image default so the listen port and optional stable seed come
+    # from the environment / .env. An empty HUB_SEED means an ephemeral identity
+    # (the hub's peer id, and every --hub string, changes on each restart).
+    command:
+      - hub
+      - --listen
+      - /ip4/0.0.0.0/tcp/${HUB_PORT:-4001}
+      - --seed
+      - ${HUB_SEED:-}
+
+    # The hub is stateless (the registry is in-memory), so no data volume is
+    # needed; logs are available via `docker compose logs`.
