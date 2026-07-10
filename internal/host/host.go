@@ -5,8 +5,11 @@ package host
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/BenLocal/goholesail/internal/connstr"
 	"github.com/BenLocal/goholesail/internal/identity"
@@ -23,7 +26,10 @@ import (
 type Options struct {
 	Seed      string // stable identity seed; empty => random ephemeral key
 	LocalPort int    // local TCP port to expose, e.g. 22
-	HubAddr   string // hub /p2p multiaddr, e.g. /ip4/1.2.3.4/tcp/4001/p2p/<hubID>
+	HubAddr   string // hub /p2p multiaddr
+
+	Private bool   // require an HMAC token from clients
+	Secret  string // shared secret; if Private and empty, one is generated
 }
 
 // Run starts the host: builds identity, connects to the hub, reserves a relay
@@ -56,8 +62,22 @@ func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 		return nil, "", fmt.Errorf("host: reserve relay slot: %w", err)
 	}
 
+	secret := ""
+	if opts.Private {
+		secret = opts.Secret
+		if secret == "" {
+			secret = randomSecret()
+		}
+	}
+
 	local := fmt.Sprintf("127.0.0.1:%d", opts.LocalPort)
 	h.SetStreamHandler(tunnel.ProtocolID, func(s network.Stream) {
+		_ = s.SetReadDeadline(time.Now().Add(10 * time.Second))
+		if err := tunnel.ServerHandshake(s, secret); err != nil {
+			_ = s.Reset()
+			return
+		}
+		_ = s.SetReadDeadline(time.Time{})
 		conn, err := net.Dial("tcp", local)
 		if err != nil {
 			_ = s.Reset()
@@ -68,9 +88,10 @@ func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 
 	cs := connstr.ConnString{
 		Version: 1,
-		Private: false, // M2 is public mode; private/token lands in a later milestone
+		Private: opts.Private,
 		HostID:  h.ID().String(),
 		Hub:     opts.HubAddr,
+		Secret:  secret,
 	}
 	str, err := connstr.Encode(cs)
 	if err != nil {
@@ -86,4 +107,11 @@ func keyFor(seed string) (crypto.PrivKey, error) {
 		return identity.FromSeed(seed)
 	}
 	return identity.Random()
+}
+
+// randomSecret returns a fresh 32-byte secret, base64url-encoded.
+func randomSecret() string {
+	var b [32]byte
+	_, _ = rand.Read(b[:])
+	return base64.RawURLEncoding.EncodeToString(b[:])
 }

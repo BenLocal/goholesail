@@ -22,6 +22,8 @@ import (
 type Options struct {
 	ConnString string // ghs://... produced by the host
 	LocalPort  int    // local TCP port to bind, e.g. 2222
+
+	Secret string // secret for private hosts (used with the tunnel handshake)
 }
 
 // Run resolves the connection string, dials the host via the relay, and serves
@@ -31,6 +33,10 @@ func Run(ctx context.Context, opts Options) (host.Host, net.Listener, error) {
 	cs, err := connstr.Decode(opts.ConnString)
 	if err != nil {
 		return nil, nil, fmt.Errorf("client: decode connstr: %w", err)
+	}
+	secret := cs.Secret
+	if secret == "" {
+		secret = opts.Secret
 	}
 	hostID, err := peer.Decode(cs.HostID)
 	if err != nil {
@@ -94,6 +100,11 @@ func Run(ctx context.Context, opts Options) (host.Host, net.Listener, error) {
 				sctx := network.WithAllowLimitedConn(ctx, "goholesail")
 				s, err := h.NewStream(sctx, hostID, tunnel.ProtocolID)
 				if err != nil {
+					_ = conn.Close()
+					return
+				}
+				if err := tunnel.ClientHandshake(s, secret); err != nil {
+					_ = s.Reset()
 					_ = conn.Close()
 					return
 				}
