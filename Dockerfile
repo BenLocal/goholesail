@@ -23,6 +23,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
 FROM alpine:3.20
 RUN adduser -D -H -u 10001 goholesail
 COPY --from=builder /out/goholesail /usr/local/bin/goholesail
+
+# The host role runs `goholesail host` via this wrapper (config from env / an
+# env_file). The hub path ignores it (the hub compose overrides the command).
+COPY deploy/goholesail-host /usr/local/bin/goholesail-host
 USER goholesail
 
 # Default hub listen port inside the container. docker-compose overrides the

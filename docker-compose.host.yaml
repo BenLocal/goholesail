@@ -1,0 +1,25 @@
+# Run a goholesail HOST tunnel that exposes a service on THIS machine's loopback
+# (e.g. sshd on 127.0.0.1:22) through a hub. Linux only (network_mode: host).
+#
+#   cp .env.host.example .env.host   # then edit .env.host (at least LIVE + HUB)
+#   docker compose -f docker-compose.host.yaml up -d --build
+#   docker compose -f docker-compose.host.yaml logs -f   # prints the ghs:// string
+#
+# The host dials the hub outbound and connects to 127.0.0.1:<LIVE>; it binds no
+# inbound port, so nothing is published. network_mode: host makes 127.0.0.1
+# inside the container resolve to this machine's loopback (where the real
+# service listens).
+services:
+  host:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: goholesail:latest
+    container_name: goholesail-host
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env.host
+    # env_file injects LIVE/HUB/SEED/PRIVATE/SECRET/NAME/TAGS; the wrapper turns
+    # them into the `goholesail host` argv (private mode included, no edits here).
+    entrypoint: ["/usr/local/bin/goholesail-host"]

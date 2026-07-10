@@ -14,7 +14,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: goholesail-hub:latest
+    image: goholesail:latest
     container_name: goholesail-hub
     restart: unless-stopped
 
