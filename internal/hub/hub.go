@@ -18,6 +18,8 @@ import (
 // stable identity; empty means a random ephemeral key. A fixed seed keeps the
 // hub's peer id constant across restarts, so the --hub string and every ghs://
 // connection string that embeds it stay valid. The caller owns closing the host.
+// The relay runs with infinite per-connection limits (WithInfiniteLimits) so
+// long-lived tunnels are not reset at the default 2 min / 128 KB.
 func New(listenAddr, seed string) (host.Host, error) {
 	priv, err := keyFor(seed)
 	if err != nil {
@@ -27,7 +29,7 @@ func New(listenAddr, seed string) (host.Host, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hub: new host: %w", err)
 	}
-	if _, err := relay.New(h); err != nil {
+	if _, err := relay.New(h, relay.WithInfiniteLimits()); err != nil {
 		_ = h.Close()
 		return nil, fmt.Errorf("hub: start relay: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -13,6 +14,13 @@ import (
 	ghost "github.com/BenLocal/goholesail/internal/host"
 	ghub "github.com/BenLocal/goholesail/internal/hub"
 	"github.com/BenLocal/goholesail/internal/registry"
+	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
+	"github.com/libp2p/go-libp2p/core/protocol"
+	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 // startEcho starts a TCP echo server and returns its port.
@@ -268,5 +276,97 @@ func TestRegistryPrivateWithoutSecretFails(t *testing.T) {
 	// Resolve a private service without --secret -> client.Run must error.
 	if _, _, err := gclient.Run(ctx, gclient.Options{ConnString: "svc", Hub: hubAddr, LocalPort: 0}); err == nil {
 		t.Fatal("connecting to a private service without --secret should fail")
+	}
+}
+
+// isRelayAddr reports whether a multiaddr is a circuit-relay address (ends in
+// /p2p-circuit[/p2p/<id>]), i.e. the connection actually rode a relay rather
+// than a direct transport.
+func isRelayAddr(a ma.Multiaddr) bool {
+	_, err := a.ValueForProtocol(ma.P_CIRCUIT)
+	return err == nil
+}
+
+// TestRelayNoDataLimit forces a tunnel onto the relayed path (neither peer
+// enables hole punching, and the client only knows the server via the circuit
+// addr) and pushes 256 KB through it. go-libp2p's default relay limit resets a
+// relayed connection at 128 KB, so this fails unless the hub lifts the limit
+// with relay.WithInfiniteLimits().
+func TestRelayNoDataLimit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "")
+	if err != nil {
+		t.Fatalf("hub: %v", err)
+	}
+	t.Cleanup(func() { _ = hubH.Close() })
+	hubInfo := peer.AddrInfo{ID: hubH.ID(), Addrs: hubH.Addrs()}
+
+	// Server peer: no hole punching (never upgrades off the relay); reserves a
+	// slot and drains whatever arrives.
+	const drainProto = protocol.ID("/goholesail-test/drain/1.0.0")
+	srv, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("srv: %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	if err := srv.Connect(ctx, hubInfo); err != nil {
+		t.Fatalf("srv connect hub: %v", err)
+	}
+	if _, err := relayclient.Reserve(ctx, srv, hubInfo); err != nil {
+		t.Fatalf("srv reserve: %v", err)
+	}
+	drained := make(chan int64, 1)
+	srv.SetStreamHandler(drainProto, func(s network.Stream) {
+		defer s.Close()
+		n, _ := io.Copy(io.Discard, s)
+		drained <- n
+	})
+
+	// Client peer: no hole punching; only knows srv via the circuit addr.
+	cli, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("cli: %v", err)
+	}
+	t.Cleanup(func() { _ = cli.Close() })
+	if err := cli.Connect(ctx, hubInfo); err != nil {
+		t.Fatalf("cli connect hub: %v", err)
+	}
+	circuit, err := ma.NewMultiaddr("/p2p/" + hubInfo.ID.String() + "/p2p-circuit/p2p/" + srv.ID().String())
+	if err != nil {
+		t.Fatalf("circuit addr: %v", err)
+	}
+	cli.Peerstore().AddAddr(srv.ID(), circuit, peerstore.PermanentAddrTTL)
+
+	sctx := network.WithAllowLimitedConn(ctx, "test")
+	s, err := cli.NewStream(sctx, srv.ID(), drainProto)
+	if err != nil {
+		t.Fatalf("open stream via relay: %v", err)
+	}
+	// Confirm the stream actually rode the circuit rather than a direct
+	// connection. We can't assert on Stat().Limited here: the hub's relay runs
+	// with WithInfiniteLimits(), which by design makes the relay omit the Limit
+	// field from the handshake, so both sides report Limited=false for every
+	// relayed conn once the fix is in place (see relay.makeLimitMsg). The
+	// remote multiaddr ending in /p2p-circuit is what's actually reliable.
+	if !isRelayAddr(s.Conn().RemoteMultiaddr()) {
+		t.Fatalf("expected a relayed conn (remote addr ending /p2p-circuit); got %s, so the test is not exercising the relay path", s.Conn().RemoteMultiaddr())
+	}
+
+	payload := make([]byte, 256*1024) // 256 KB > the 128 KB default cap
+	if _, err := s.Write(payload); err != nil {
+		t.Fatalf("write over relay: %v", err)
+	}
+	if err := s.CloseWrite(); err != nil {
+		t.Fatalf("close write: %v", err)
+	}
+	select {
+	case n := <-drained:
+		if n < int64(len(payload)) {
+			t.Fatalf("relay truncated the stream at %d of %d bytes (data limit not lifted)", n, len(payload))
+		}
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for %d bytes to drain: %v", len(payload), ctx.Err())
 	}
 }
