@@ -47,6 +47,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer c.Close()
 	// One reader, one writer per connection: request in, response out. No
 	// server-initiated pushes (subscribe is deferred), so no write mutex needed.
+	//
+	// TODO(resilience, M4): this loop sets no read deadline and runs no
+	// ping/pong keepalive, so a client that connects and then goes idle (or is
+	// silently dropped at the TCP layer) parks this goroutine and its FD in
+	// ReadJSON until an error arrives, which may be never. The default upgrader
+	// also accepts any Origin. Both are accepted debt for M3 — an internal tool
+	// where resilience is an explicit non-goal — and belong with M4's hardening.
 	for {
 		var m Msg
 		if err := c.ReadJSON(&m); err != nil {

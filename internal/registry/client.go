@@ -41,15 +41,28 @@ func (c *Client) roundtrip(m Msg) (Msg, error) {
 	return resp, nil
 }
 
+// ttlSeconds converts a Duration to the whole-second granularity of the wire
+// protocol. A positive sub-second TTL rounds up to 1s rather than truncating to
+// 0, since the server reads a 0 TTL as "use the default" — without this, e.g.
+// 500ms would silently balloon into the 90s default instead of expiring soon.
+// A zero or negative TTL stays 0, deliberately requesting the server default.
+func ttlSeconds(ttl time.Duration) int {
+	secs := int(ttl / time.Second)
+	if secs == 0 && ttl > 0 {
+		secs = 1
+	}
+	return secs
+}
+
 // Register stores a service with the given TTL.
 func (c *Client) Register(svc Service, ttl time.Duration) error {
-	_, err := c.roundtrip(Msg{Type: "register", Service: &svc, TTLSeconds: int(ttl / time.Second)})
+	_, err := c.roundtrip(Msg{Type: "register", Service: &svc, TTLSeconds: ttlSeconds(ttl)})
 	return err
 }
 
 // Renew refreshes a service's TTL by name.
 func (c *Client) Renew(name string, ttl time.Duration) error {
-	_, err := c.roundtrip(Msg{Type: "renew", Name: name, TTLSeconds: int(ttl / time.Second)})
+	_, err := c.roundtrip(Msg{Type: "renew", Name: name, TTLSeconds: ttlSeconds(ttl)})
 	return err
 }
 
