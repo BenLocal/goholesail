@@ -15,11 +15,15 @@ import (
 )
 
 const (
-	supervisorInterval  = 10 * time.Second
+	supervisorInterval  = 10 * time.Second // recheck cadence while connected
 	reconnectBackoffMax = 30 * time.Second
-	dialRetryWindow     = 30 * time.Second
-	dialRetryStart      = 500 * time.Millisecond
-	dialRetryMax        = 4 * time.Second
+
+	// dialRetryWindow is how long a newly-accepted local connection is held
+	// while the P2P path heals before giving up. A caller that then reads with
+	// its own deadline should allow at least this long.
+	dialRetryWindow = 30 * time.Second
+	dialRetryStart  = 500 * time.Millisecond
+	dialRetryMax    = 4 * time.Second
 )
 
 // ensureConnected makes sure h has a live connection to the hub and to the host
@@ -83,6 +87,8 @@ func openStreamWithRetry(ctx context.Context, h host.Host, hubInfo peer.AddrInfo
 	deadline := time.Now().Add(dialRetryWindow)
 	backoff := dialRetryStart
 	for {
+		// Error intentionally ignored: a failed ensure just makes the NewStream
+		// below fail too, which is what drives the retry/backoff/log path here.
 		_ = ensureConnected(ctx, h, hubInfo, hostID, circuit)
 		sctx := network.WithAllowLimitedConn(ctx, "goholesail")
 		s, err := h.NewStream(sctx, hostID, protocolID)

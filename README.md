@@ -36,5 +36,10 @@ goholesail list --hub <hub-/p2p-addr> [--tag ssh]
 M1+M2 (public TCP tunnel), M3 (private-mode HMAC auth + service registry with
 `--name` resolution), and the single-port rework (registry served over the
 libp2p `/goholesail/registry/1.0.0` stream protocol on the hub — one open port,
-Noise-encrypted + peer-authenticated) are implemented. Resilience/fallback (M4)
-and UDP (M5) are tracked in the specs.
+Noise-encrypted + peer-authenticated) are implemented. Resilience (part of M4)
+has landed too: the hub relay runs without the default 2 min / 128 KB
+per-connection limit, the host renews its relay reservation and re-reserves
+promptly when the hub link drops, and `connect` keeps its hub+host connections
+warm, tolerates the host being down at startup, and holds a new connection
+through a transient outage (bounded ~30 s re-dial). Remaining fallback work and
+UDP (M5) are tracked in the specs.
