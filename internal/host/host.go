@@ -197,20 +197,41 @@ func logReservation(l *log.Logger, res *relayclient.Reservation) {
 		res.Expiration.Format(time.RFC3339), res.LimitDuration, res.LimitData)
 }
 
-// maintainReservation re-reserves the relay slot before the current reservation
-// expires, forever, until ctx is cancelled.
+// hostLivenessInterval bounds how long a dropped host<->hub link (which drops
+// the relay reservation with it) can go unnoticed before the host reconnects
+// and re-reserves.
+const hostLivenessInterval = 5 * time.Second
+
+// maintainReservation keeps the relay reservation alive until ctx is cancelled.
+// It re-reserves when the reservation is due for renewal (Stage 1 behavior) OR
+// when the host<->hub connection has dropped (which loses the reservation and
+// makes the host unreachable until it reconnects and reserves again). It wakes
+// at least every hostLivenessInterval so a drop is caught promptly.
 func maintainReservation(ctx context.Context, h host.Host, hubInfo peer.AddrInfo, res *relayclient.Reservation, logger *log.Logger) {
+	renewAt := time.Now().Add(reservationRenewWait(res.Expiration, time.Now()))
 	for {
+		wait := time.Until(renewAt)
+		if wait > hostLivenessInterval {
+			wait = hostLivenessInterval
+		}
+		if wait < 0 {
+			wait = 0
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(reservationRenewWait(res.Expiration, time.Now())):
+		case <-time.After(wait):
 		}
-		next, ok := reserveWithBackoff(ctx, h, hubInfo, logger)
-		if !ok {
-			return // ctx cancelled
+		dueForRenewal := !time.Now().Before(renewAt)
+		hubDown := h.Network().Connectedness(hubInfo.ID) != network.Connected
+		if dueForRenewal || hubDown {
+			next, ok := reserveWithBackoff(ctx, h, hubInfo, logger)
+			if !ok {
+				return // ctx cancelled
+			}
+			res = next
+			renewAt = time.Now().Add(reservationRenewWait(res.Expiration, time.Now()))
 		}
-		res = next
 	}
 }
 

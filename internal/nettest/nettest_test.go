@@ -504,3 +504,56 @@ func roundTrip(t *testing.T, addr, line, want string) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
+
+func TestHostReReservesAfterHubDrop(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	echoPort := startEcho(t)
+
+	// Normal hub (default ~1h reservation TTL): the only reason to re-reserve
+	// during this test is the forced drop, not a TTL renewal.
+	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "")
+	if err != nil {
+		t.Fatalf("hub: %v", err)
+	}
+	t.Cleanup(func() { _ = hubH.Close() })
+	hubAddr := ghub.P2pAddrs(hubH)[0]
+	hubID := hubH.ID()
+
+	var sb syncBuf
+	hostH, _, err := ghost.Run(ctx, ghost.Options{
+		Seed: "redrop-seed", LocalPort: echoPort, HubAddr: hubAddr,
+		Logger: log.New(&sb, "[host] ", 0),
+	})
+	if err != nil {
+		t.Fatalf("host run: %v", err)
+	}
+	t.Cleanup(func() { _ = hostH.Close() })
+
+	waitUntil(t, 10*time.Second, func() bool {
+		return strings.Count(sb.String(), "relay reservation ok") >= 1
+	}, "initial reservation")
+	before := strings.Count(sb.String(), "relay reservation ok")
+
+	// Drop the host<->hub link; the relay drops the reservation with it.
+	if err := hostH.Network().ClosePeer(hubID); err != nil {
+		t.Fatalf("close hub conn: %v", err)
+	}
+
+	waitUntil(t, 20*time.Second, func() bool {
+		return strings.Count(sb.String(), "relay reservation ok") > before
+	}, "re-reservation after hub drop")
+}
+
+// waitUntil polls cond until true or the timeout, failing the test with what.
+func waitUntil(t *testing.T, timeout time.Duration, cond func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
