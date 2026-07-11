@@ -65,11 +65,12 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           # Requires a full semver tag (vX.Y.Z). A non-semver v* tag (e.g. v1 or
-          # vtest) emits no tag here and fails the push step.
+          # vtest) emits no tag here and fails the push step. latest=auto tags
+          # :latest only for a stable release (a -rc/-pre tag won't clobber it).
           tags: |
             type=semver,pattern=v{{version}}
           flavor: |
-            latest=true
+            latest=auto
 
       - name: Build & push multi-arch image
         if: startsWith(github.ref, 'refs/tags/v')
