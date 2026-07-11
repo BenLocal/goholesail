@@ -101,9 +101,17 @@ CFG_DIR="$RPFX/etc/goholesail"
 mkdir -p "$BIN_DIR" "$CFG_DIR"
 
 # ---- acquire the binary ----
+need_download=1
 if [ -n "$BINARY" ]; then
+	echo "install.sh: using provided binary: $BINARY"
 	install -m 0755 "$BINARY" "$BIN_DIR/goholesail"
-else
+	need_download=0
+elif [ -x "$BIN_DIR/goholesail" ]; then
+	echo "install.sh: goholesail already installed at $BIN_DIR/goholesail, skipping download"
+	need_download=0
+fi
+
+if [ "$need_download" = 1 ]; then
 	os="${GHS_OS:-$(uname -s | tr '[:upper:]' '[:lower:]')}"
 	raw="${GHS_ARCH:-$(uname -m)}"
 	case "$raw" in
@@ -220,7 +228,7 @@ if [ "$ROOT" = "/" ]; then
 	systemd)
 		systemctl daemon-reload
 		systemctl enable goholesail-host
-		systemctl restart goholesail-host
+		systemctl restart --no-block goholesail-host
 		;;
 	supervisor)
 		supervisorctl reread

@@ -25,6 +25,9 @@ services:
     ports:
       - "${HUB_PUBLISH_ADDR:-0.0.0.0}:${HUB_PORT:-4001}:${HUB_PORT:-4001}/tcp"
 
+    environment:
+      - HUB_ANNOUNCE_ADDR=${HUB_ANNOUNCE_ADDR:-}
+
     # Override the image default so the listen port and optional stable seed come
     # from the environment / .env. An empty HUB_SEED means an ephemeral identity
     # (the hub's peer id, and every --hub string, changes on each restart).

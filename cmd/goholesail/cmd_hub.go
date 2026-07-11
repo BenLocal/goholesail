@@ -15,11 +15,16 @@ import (
 func newHubCmd() *cobra.Command {
 	var listen string
 	var seed string
+	var announce string
 	cmd := &cobra.Command{
 		Use:   "hub",
 		Short: "Run the relay/rendezvous hub",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			h, err := hub.New(listen, seed)
+			// --announce flag takes precedence; fall back to HUB_ANNOUNCE_ADDR env.
+			if announce == "" {
+				announce = os.Getenv("HUB_ANNOUNCE_ADDR")
+			}
+			h, err := hub.New(listen, seed, announce)
 			if err != nil {
 				return err
 			}
@@ -40,6 +45,7 @@ func newHubCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&listen, "listen", "/ip4/0.0.0.0/tcp/4001", "libp2p listen multiaddr")
 	cmd.Flags().StringVar(&seed, "seed", "", "stable identity seed (empty = ephemeral; set it to keep --hub stable across restarts)")
+	cmd.Flags().StringVar(&announce, "announce", "", "optional public multiaddr to announce (e.g. /ip4/203.0.113.10/tcp/4001); also settable via HUB_ANNOUNCE_ADDR env var. Needed when the hub runs behind NAT/Docker and cannot see its public IP")
 	return cmd
 }
 
