@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -21,20 +22,20 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build release archives
+      - name: Build binaries & archives
         run: |
           set -euo pipefail
           mkdir -p dist
           for target in linux/amd64 linux/arm64; do
             os="${target%/*}"; arch="${target#*/}"
             echo "building $os/$arch"
+            mkdir -p "img/${os}/${arch}"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -trimpath -ldflags="-s -w" -o "dist/goholesail" ./cmd/goholesail
-            tar -C dist -czf "dist/goholesail_${os}_${arch}.tar.gz" goholesail
-            rm dist/goholesail
+              go build -trimpath -ldflags="-s -w" -o "img/${os}/${arch}/goholesail" ./cmd/goholesail
+            tar -C "img/${os}/${arch}" -czf "dist/goholesail_${os}_${arch}.tar.gz" goholesail
           done
           ( cd dist && sha256sum goholesail_*.tar.gz > checksums.txt )
-          ls -l dist
+          ls -lR dist img
 
       - name: Publish GitHub Release
         # Only publish on a version tag. A workflow_dispatch from a branch still
@@ -44,3 +45,40 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes
+
+      - name: Set up Docker Buildx
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # Requires a full semver tag (vX.Y.Z). A non-semver v* tag (e.g. v1 or
+          # vtest) emits no tag here and fails the push step.
+          tags: |
+            type=semver,pattern=v{{version}}
+          flavor: |
+            latest=true
+
+      - name: Build & push multi-arch image
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
