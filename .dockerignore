@@ -8,10 +8,11 @@ LICENSE
 # Docker / compose files aren't needed inside the build.
 Dockerfile
 docker-compose.yaml
+docker-compose.host.yaml
 .dockerignore
 
-# Never ship local env (may hold a real HUB_SEED).
-.env
+# Never ship local env (may hold a real HUB_SEED or shared secret).
+.env*
 
 # Built binaries.
 /goholesail

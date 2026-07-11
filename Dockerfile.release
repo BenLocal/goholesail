@@ -1,0 +1,13 @@
+# Runtime-only image for multi-arch release builds. No compilation and no RUN
+# steps, so buildx assembles linux/amd64 + linux/arm64 without QEMU emulation:
+# the per-arch binary is cross-compiled beforehand (release.yml) into
+# img/<os>/<arch>/goholesail and selected here via TARGETOS/TARGETARCH.
+FROM alpine:3.20
+ARG TARGETOS
+ARG TARGETARCH
+COPY img/${TARGETOS}/${TARGETARCH}/goholesail /usr/local/bin/goholesail
+COPY deploy/goholesail-host /usr/local/bin/goholesail-host
+USER 10001:10001
+EXPOSE 4001
+ENTRYPOINT ["goholesail"]
+CMD ["hub", "--listen", "/ip4/0.0.0.0/tcp/4001"]
