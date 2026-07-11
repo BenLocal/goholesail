@@ -48,6 +48,32 @@ Uses `network_mode: host`, so `127.0.0.1:<LIVE>` inside the container is this
 machine's loopback. All host flags come from `.env.host`
 (`LIVE/HUB/SEED/PRIVATE/SECRET/NAME/TAGS`).
 
+### Prebuilt image (GHCR)
+
+Every `v*` release publishes a multi-arch (linux amd64/arm64) image:
+
+```bash
+docker pull ghcr.io/benlocal/goholesail:latest      # or a pinned :vX.Y.Z
+```
+
+The image is role-agnostic — it runs the hub by default; run a host with an
+explicit command (host networking so `127.0.0.1:<live>` is this machine's
+service):
+
+```bash
+docker run --network host ghcr.io/benlocal/goholesail:latest \
+  host --live 22 --hub /ip4/203.0.113.10/tcp/4001/p2p/12D3KooW...
+```
+
+`docker-compose.host.yaml` can set `image: ghcr.io/benlocal/goholesail:latest`
+(and drop `build:`) to run the published image instead of building locally.
+
+> **One-time after the first release:** the GHCR package starts **private**. Set
+> it to **Public** once at
+> `https://github.com/users/BenLocal/packages/container/goholesail/settings` so
+> `docker pull` works without `docker login` (the release workflow can't change
+> package visibility with the default `GITHUB_TOKEN`).
+
 ### Native (systemd or supervisord)
 
 Install the released binary and register it as a service — you pick the manager:
