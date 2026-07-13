@@ -43,6 +43,7 @@ to connect. Enabling it pins the transport to TCP (pnet does not support QUIC).
 goholesail hub    --listen /ip4/0.0.0.0/tcp/4001 --seed <hub-seed> --swarm-key <passphrase>
 goholesail host   --live 22 --seed <seed> --hub <hub-addr>          --swarm-key <passphrase>
 goholesail connect 'ghs://...' --port 2222                          --swarm-key <passphrase>
+goholesail list   --hub <hub-addr>                                  --swarm-key <passphrase>
 ```
 
 ## Deploying a host
