@@ -14,13 +14,14 @@ import (
 
 func newHostCmd() *cobra.Command {
 	var (
-		live    int
-		seed    string
-		hubAddr string
-		private bool
-		secret  string
-		name    string
-		tags    []string
+		live     int
+		seed     string
+		hubAddr  string
+		private  bool
+		secret   string
+		swarmKey string
+		name     string
+		tags     []string
 	)
 	cmd := &cobra.Command{
 		Use:   "host",
@@ -34,6 +35,7 @@ func newHostCmd() *cobra.Command {
 			h, cs, err := host.Run(ctx, host.Options{
 				Seed: seed, LocalPort: live, HubAddr: hubAddr,
 				Private: private, Secret: secret,
+				SwarmKey: resolveSwarmKey(swarmKey),
 				Name: name, Tags: tags,
 				Logger: log.New(os.Stderr, "[host] ", log.LstdFlags),
 			})
@@ -52,6 +54,7 @@ func newHostCmd() *cobra.Command {
 	cmd.Flags().StringVar(&hubAddr, "hub", "", "hub /p2p multiaddr (required)")
 	cmd.Flags().BoolVar(&private, "private", false, "require a shared secret from clients")
 	cmd.Flags().StringVar(&secret, "secret", "", "shared secret (with --private; empty => generated)")
+	cmd.Flags().StringVar(&swarmKey, "swarm-key", "", "shared swarm passphrase for a private network (pnet); hub/host/client must all use the same value; also settable via SWARM_KEY env")
 	cmd.Flags().StringVar(&name, "name", "", "registry name to publish under")
 	cmd.Flags().StringSliceVar(&tags, "tags", nil, "registry tags (comma-separated)")
 	_ = cmd.MarkFlagRequired("live")

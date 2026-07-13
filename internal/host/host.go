@@ -15,6 +15,7 @@ import (
 	"github.com/BenLocal/goholesail/internal/connstr"
 	"github.com/BenLocal/goholesail/internal/identity"
 	"github.com/BenLocal/goholesail/internal/registry"
+	"github.com/BenLocal/goholesail/internal/swarm"
 	"github.com/BenLocal/goholesail/internal/tunnel"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -32,6 +33,8 @@ type Options struct {
 
 	Private bool   // require an HMAC token from clients
 	Secret  string // shared secret; if Private and empty, one is generated
+
+	SwarmKey string // shared swarm passphrase (pnet); empty => no private network
 
 	Name string   // registry name; empty => no auto-register (registers to --hub)
 	Tags []string // registry tags
@@ -54,10 +57,12 @@ func Run(ctx context.Context, opts Options) (host.Host, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	h, err := libp2p.New(
+	libp2pOpts := []libp2p.Option{
 		libp2p.Identity(priv),
 		libp2p.EnableHolePunching(),
-	)
+	}
+	libp2pOpts = append(libp2pOpts, swarm.Options(opts.SwarmKey)...)
+	h, err := libp2p.New(libp2pOpts...)
 	if err != nil {
 		return nil, "", fmt.Errorf("host: new: %w", err)
 	}
