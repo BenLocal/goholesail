@@ -658,3 +658,78 @@ func TestConnectWaitsThroughOutage(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, "echo:two\n")
 	}
 }
+
+func TestSwarmKeyMatchedTunnel(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	echoPort := startEcho(t)
+
+	const key = "swarm-pass"
+	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "", key)
+	if err != nil {
+		t.Fatalf("hub: %v", err)
+	}
+	t.Cleanup(func() { _ = h.Close() })
+	hubAddr := ghub.P2pAddrs(h)[0]
+
+	hostH, cs, err := ghost.Run(ctx, ghost.Options{
+		Seed: "swarm-host", LocalPort: echoPort, HubAddr: hubAddr, SwarmKey: key,
+	})
+	if err != nil {
+		t.Fatalf("host run: %v", err)
+	}
+	t.Cleanup(func() { _ = hostH.Close() })
+
+	clientH, ln, err := gclient.Run(ctx, gclient.Options{ConnString: cs, LocalPort: 0, SwarmKey: key})
+	if err != nil {
+		t.Fatalf("client run: %v", err)
+	}
+	t.Cleanup(func() { _ = clientH.Close(); _ = ln.Close() })
+
+	roundTrip(t, ln.Addr().String(), "hello", "echo:hello\n")
+}
+
+func TestSwarmKeyMismatchRejected(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	echoPort := startEcho(t)
+
+	// Hub + host share swarm-A.
+	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "", "swarm-A")
+	if err != nil {
+		t.Fatalf("hub: %v", err)
+	}
+	t.Cleanup(func() { _ = h.Close() })
+	hubAddr := ghub.P2pAddrs(h)[0]
+
+	hostH, cs, err := ghost.Run(ctx, ghost.Options{
+		Seed: "swarm-host2", LocalPort: echoPort, HubAddr: hubAddr, SwarmKey: "swarm-A",
+	})
+	if err != nil {
+		t.Fatalf("host run: %v", err)
+	}
+	t.Cleanup(func() { _ = hostH.Close() })
+
+	// Client is on a DIFFERENT swarm key: its pnet-protected TCP handshake to the
+	// hub can never complete, so no bytes ever reach the echo server. Run itself
+	// still returns — the ghs:// path connects lazily in the background.
+	clientH, ln, err := gclient.Run(ctx, gclient.Options{ConnString: cs, LocalPort: 0, SwarmKey: "swarm-B"})
+	if err != nil {
+		t.Fatalf("client run: %v", err)
+	}
+	t.Cleanup(func() { _ = clientH.Close(); _ = ln.Close() })
+
+	conn, err := net.DialTimeout("tcp", ln.Addr().String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial local: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	fmt.Fprintf(conn, "hi\n")
+	// Mismatched pnet means the stream never opens; the read must NOT return
+	// echoed data (it times out or EOFs instead).
+	buf := make([]byte, 16)
+	if n, err := conn.Read(buf); err == nil && n > 0 && string(buf[:n]) == "echo:hi\n" {
+		t.Fatalf("mismatched swarm key should not have tunneled data, got %q", buf[:n])
+	}
+}
