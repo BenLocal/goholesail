@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/BenLocal/goholesail/internal/identity"
+	"github.com/BenLocal/goholesail/internal/swarm"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -25,7 +26,15 @@ import (
 // announceAddr is an optional multiaddr (e.g. "/ip4/203.0.113.10/tcp/4001") that
 // will be appended to the host's advertised addresses. This is useful when the
 // hub runs behind NAT or inside a Docker container and cannot see its public IP.
-func New(listenAddr, seed, announceAddr string) (host.Host, error) {
+//
+// swarmKey, when non-empty, puts the hub on a private swarm (pnet): only peers
+// sharing the same key can connect, and the transport is pinned to TCP. It must
+// match the --swarm-key given to every host and client. Empty = public (default).
+//
+// NOTE: New now takes four positional args (listen/seed/announce/swarmKey). This
+// is at the edge of what positional params should carry; a future refactor to an
+// Options struct is reasonable if it grows further (out of scope here).
+func New(listenAddr, seed, announceAddr, swarmKey string) (host.Host, error) {
 	priv, err := keyFor(seed)
 	if err != nil {
 		return nil, err
@@ -43,6 +52,7 @@ func New(listenAddr, seed, announceAddr string) (host.Host, error) {
 			return append(addrs, a)
 		}))
 	}
+	opts = append(opts, swarm.Options(swarmKey)...)
 	h, err := libp2p.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("hub: new host: %w", err)

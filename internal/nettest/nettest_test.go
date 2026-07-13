@@ -61,7 +61,7 @@ func TestEndToEndTCPTunnel(t *testing.T) {
 	echoPort := startEcho(t)
 
 	// Hub on a random local port.
-	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "")
+	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestPrivateTunnelRightSecret(t *testing.T) {
 	defer cancel()
 	echoPort := startEcho(t)
 
-	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "")
+	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestPrivateTunnelWrongSecretRejected(t *testing.T) {
 	defer cancel()
 	echoPort := startEcho(t)
 
-	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "")
+	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestRegistryNameResolutionPrivate(t *testing.T) {
 	echoPort := startEcho(t)
 
 	// Hub with the registry protocol mounted (as the hub binary does).
-	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "")
+	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestRegistryPrivateWithoutSecretFails(t *testing.T) {
 	defer cancel()
 	echoPort := startEcho(t)
 
-	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "")
+	h, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestRelayNoDataLimit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "")
+	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -431,7 +431,7 @@ func TestConnectLoggingAndRedial(t *testing.T) {
 	defer cancel()
 	echoPort := startEcho(t)
 
-	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "")
+	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestHostReReservesAfterHubDrop(t *testing.T) {
 
 	// Normal hub (default ~1h reservation TTL): the only reason to re-reserve
 	// during this test is the forced drop, not a TTL renewal.
-	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "")
+	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -564,7 +564,7 @@ func TestClientStartsBeforeHost(t *testing.T) {
 	defer cancel()
 	echoPort := startEcho(t)
 
-	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "")
+	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
@@ -609,7 +609,7 @@ func TestConnectWaitsThroughOutage(t *testing.T) {
 	defer cancel()
 	echoPort := startEcho(t)
 
-	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "")
+	hubH, err := ghub.New("/ip4/127.0.0.1/tcp/0", "", "", "")
 	if err != nil {
 		t.Fatalf("hub: %v", err)
 	}
