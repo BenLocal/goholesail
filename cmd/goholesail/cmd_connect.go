@@ -14,9 +14,10 @@ import (
 
 func newConnectCmd() *cobra.Command {
 	var (
-		port    int
-		hubAddr string
-		secret  string
+		port     int
+		hubAddr  string
+		secret   string
+		swarmKey string
 	)
 	cmd := &cobra.Command{
 		Use:   "connect <connection-string|name>",
@@ -28,6 +29,7 @@ func newConnectCmd() *cobra.Command {
 			h, ln, err := client.Run(ctx, client.Options{
 				ConnString: args[0], LocalPort: port,
 				Hub: hubAddr, Secret: secret,
+				SwarmKey: resolveSwarmKey(swarmKey),
 				Logger: log.New(os.Stderr, "[connect] ", log.LstdFlags),
 			})
 			if err != nil {
@@ -43,5 +45,6 @@ func newConnectCmd() *cobra.Command {
 	cmd.Flags().IntVar(&port, "port", 0, "local TCP port to bind (0 = random)")
 	cmd.Flags().StringVar(&hubAddr, "hub", "", "hub /p2p multiaddr (required when passing a name)")
 	cmd.Flags().StringVar(&secret, "secret", "", "shared secret for a private host")
+	cmd.Flags().StringVar(&swarmKey, "swarm-key", "", "shared swarm passphrase for a private network (pnet); hub/host/client must all use the same value; also settable via SWARM_KEY env")
 	return cmd
 }

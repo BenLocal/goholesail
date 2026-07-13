@@ -13,6 +13,7 @@ import (
 	"github.com/BenLocal/goholesail/internal/connstr"
 	"github.com/BenLocal/goholesail/internal/identity"
 	"github.com/BenLocal/goholesail/internal/registry"
+	"github.com/BenLocal/goholesail/internal/swarm"
 	"github.com/BenLocal/goholesail/internal/tunnel"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -28,6 +29,8 @@ type Options struct {
 	Secret string // secret for private hosts
 	Hub    string // hub /p2p multiaddr; required when ConnString is a bare name
 
+	SwarmKey string // shared swarm passphrase (pnet); empty => no private network
+
 	Logger *log.Logger // nil => silent; the CLI injects a [connect] logger
 }
 
@@ -39,10 +42,12 @@ func Run(ctx context.Context, opts Options) (host.Host, net.Listener, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	h, err := libp2p.New(
+	libp2pOpts := []libp2p.Option{
 		libp2p.Identity(priv),
 		libp2p.EnableHolePunching(),
-	)
+	}
+	libp2pOpts = append(libp2pOpts, swarm.Options(opts.SwarmKey)...)
+	h, err := libp2p.New(libp2pOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("client: new: %w", err)
 	}
