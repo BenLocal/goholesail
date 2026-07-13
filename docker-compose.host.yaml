@@ -20,6 +20,8 @@ services:
     network_mode: host
     env_file:
       - .env.host
-    # env_file injects LIVE/HUB/SEED/PRIVATE/SECRET/NAME/TAGS; the wrapper turns
-    # them into the `goholesail host` argv (private mode included, no edits here).
+    # env_file injects LIVE/HUB/SEED/PRIVATE/SECRET/NAME/TAGS/SWARM_KEY; the
+    # wrapper turns them into the `goholesail host` argv. SWARM_KEY is read from
+    # the environment by the app itself (SWARM_KEY fallback), so no argv edit is
+    # needed for it.
     entrypoint: ["/usr/local/bin/goholesail-host"]

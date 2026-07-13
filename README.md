@@ -31,6 +31,20 @@ ssh -p 2222 user@127.0.0.1
 goholesail list --hub <hub-/p2p-addr> [--tag ssh]
 ```
 
+### Private swarm (optional, opt-in)
+
+Pass the SAME `--swarm-key <passphrase>` (or `SWARM_KEY` env) to the hub, every
+host, and every client to put them on a libp2p private network (pnet). Peers
+without the passphrase cannot connect or even confirm the hub speaks libp2p —
+the swarm is invisible to scanners. It is all-or-nothing: mismatched keys fail
+to connect. Enabling it pins the transport to TCP (pnet does not support QUIC).
+
+```bash
+goholesail hub    --listen /ip4/0.0.0.0/tcp/4001 --seed <hub-seed> --swarm-key <passphrase>
+goholesail host   --live 22 --seed <seed> --hub <hub-addr>          --swarm-key <passphrase>
+goholesail connect 'ghs://...' --port 2222                          --swarm-key <passphrase>
+```
+
 ## Deploying a host
 
 Run a long-lived `host` tunnel that exposes a service on the machine's loopback
